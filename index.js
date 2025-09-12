@@ -3,6 +3,7 @@ const app = express();
 const dotenv = require('dotenv');
 const cors = require('cors');
 const bodyParser = require("body-parser");
+const port = process.env.PORT || 9000; 
 
 dotenv.config();
 
@@ -44,6 +45,6 @@ app.get('/me', auth, (req, res) => {
   res.json({ user: req.user });
 });
 
-app.listen(9000, () => {
-    console.log('ON PORT 9000');
-});
+app.listen(port, () => {
+  console.log(`Listening on port ${port}`)
+})
