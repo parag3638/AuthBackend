@@ -7,10 +7,8 @@ const bodyParser = require("body-parser");
 dotenv.config();
 
 
-const authRoutes = require('./routers/auth/authRoutes')();
-const mail = require('./routers/common/mail.js')();
-
-
+const auth = require('./routers/auth/middlewares/authMiddleware');
+const authRoutes = require('./routers/auth/authRoutes');
 
 const allowedOrigins = [
     'http://localhost:9000',
@@ -31,18 +29,19 @@ app.use(
     })
 );
 
-
 app.set('view engine', 'ejs');
 app.use(bodyParser.json());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 app.use('/api/auth/', authRoutes);
-app.use('/mail/', mail);
 
 
 app.get('/', (req, res) => {
     res.send('MFA Auth Working!');
+});
+
+app.get('/me', auth, (req, res) => {
+  res.json({ user: req.user });
 });
 
 app.listen(9000, () => {
