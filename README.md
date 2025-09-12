@@ -3,7 +3,8 @@ Common MFA Auth
 
 # Next Up:
 Refresh tokens with rotation.
-Change UserRole to Admin via API
+Change UserRole to Admin via API.
+Google Auth
 
 
 ---
