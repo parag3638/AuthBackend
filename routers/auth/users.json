@@ -1,0 +1,34 @@
+[
+  {
+    "id": 1,
+    "name": "John Doe",
+    "email": "john@example.com",
+    "password_hash": "$2b$10$ejg/HZTSUkH1c16wg4kRouHEaCxpggZCbCPwDjUg0pSMuFzpuIzhG",
+    "role": "user",
+    "In_Stamp": "2024-02-13T12:00:00Z"
+  },
+  {
+    "id": 1,
+    "name": "Parag Singh",
+    "email": "parag.singh528@gmail.com",
+    "password_hash": "$2b$10$ejg/HZTSUkH1c16wg4kRouHEaCxpggZCbCPwDjUg0pSMuFzpuIzhG",
+    "role": "user",
+    "In_Stamp": "2024-02-13T12:00:00Z"
+  },
+  {
+    "id": 2,
+    "name": "Admin User",
+    "email": "admin@example.com",
+    "password_hash": "$2b$10$gDAH3eSnZsk61x9.XB6kne14z9eDgVeLaLA6SrSp0XYFHGkXJVju.",
+    "role": "admin",
+    "In_Stamp": "2024-02-13T12:30:00Z"
+  },
+  {
+    "id": 3,
+    "name": "Johny Holer",
+    "email": "johny@holer.com",
+    "password_hash": "$2b$10$xheYAt1OD9wJmNmt3dn/6eTQqAGlxVzfQ3GA/E6yu2nH/i9BFHRG2",
+    "role": "user",
+    "In_Stamp": "2025-02-13T20:30:09.421Z"
+  }
+]
