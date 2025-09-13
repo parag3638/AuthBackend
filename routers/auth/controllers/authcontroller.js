@@ -109,32 +109,200 @@ async function verifyAndConsumeOtp(user_id, otp, purpose) {
 // Controllers
 // ──────────────────────────────────────────────────────────────────────────────
 
-// POST /register  { name, email, password, role? }
+// // POST /register  { name, email, password, role? }
+// exports.register = async (req, res) => {
+//   try {
+//     let { name, email, password, role = 'user' } = req.body || {};
+//     if (!name || !email || !password) {
+//       return res.status(400).json({ error: 'name, email, password are required' });
+//     }
+//     email = String(email).trim();
+
+//     const existing = await findUserByEmail(email);
+//     if (existing) {
+//       return res.status(409).json({ error: 'User with this email already exists' });
+//     }
+
+//     const password_hash = await bcrypt.hash(password, 10);
+//     const user = await insertUser({ name, email, password_hash, role });
+
+//     return res.status(201).json({
+//       message: 'User registered successfully',
+//       user: { id: user.id, name: user.name, email: user.email, role: user.role }
+//     });
+//   } catch (err) {
+//     console.error('Registration error:', err);
+//     return res.status(500).json({ error: 'Server error' });
+//   }
+// };
+
+
+// POST /register  { name, email, password }
 exports.register = async (req, res) => {
   try {
-    let { name, email, password, role = 'user' } = req.body || {};
-    if (!name || !email || !password) {
+    const { name, email: rawEmail, password } = req.body || {};
+    if (!name || !rawEmail || !password) {
       return res.status(400).json({ error: 'name, email, password are required' });
     }
-    email = String(email).trim();
+    const email = String(rawEmail).trim().toLowerCase();
 
+    // 1) Block if an account already exists
     const existing = await findUserByEmail(email);
-    if (existing) {
-      return res.status(409).json({ error: 'User with this email already exists' });
-    }
+    if (existing) return res.status(409).json({ error: 'User with this email already exists' });
 
+    // 2) Hash password now; generate & hash OTP
     const password_hash = await bcrypt.hash(password, 10);
-    const user = await insertUser({ name, email, password_hash, role });
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp_hash = await bcrypt.hash(otp, 10);
 
-    return res.status(201).json({
-      message: 'User registered successfully',
-      user: { id: user.id, name: user.name, email: user.email, role: user.role }
+    // 3) Upsert into pending_registrations (one pending per email)
+    await supabase
+      .from('pending_registrations')
+      .upsert({
+        name,
+        email,
+        password_hash,
+        otp_hash,
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // 10m
+        attempts: 0,
+        consumed_at: null
+      }, { onConflict: 'email' });
+
+    // 4) Email OTP
+    await resend.emails.send({
+      from: RESEND_FROM,
+      to: email,
+      subject: 'Verify your email (OTP)',
+      html: `<p>Your registration OTP is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`
     });
+
+    return res.status(200).json({ message: 'OTP sent to email. Please verify to complete registration.' });
   } catch (err) {
-    console.error('Registration error:', err);
+    console.error('Register (start) error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 };
+
+// POST /register/verify  { email, otp }
+exports.verifyRegisterOtp = async (req, res) => {
+  try {
+    const { email: rawEmail, otp } = req.body || {};
+    if (!rawEmail || !otp) return res.status(400).json({ error: 'email and otp are required' });
+    const email = String(rawEmail).trim().toLowerCase();
+
+    // 1) Fetch pending record
+    const { data: pending, error } = await supabase
+      .from('pending_registrations')
+      .select('*')
+      .eq('email', email)
+      .is('consumed_at', null)
+      .maybeSingle();
+    if (error) throw error;
+
+    if (!pending) return res.status(401).json({ error: 'No pending registration or already verified' });
+    if (new Date(pending.expires_at) < new Date()) return res.status(401).json({ error: 'OTP expired' });
+
+    // Attempts cap
+    if (pending.attempts >= 5) return res.status(429).json({ error: 'Too many attempts' });
+
+    const ok = await bcrypt.compare(otp, pending.otp_hash);
+    // bump attempts
+    await supabase.from('pending_registrations').update({ attempts: pending.attempts + 1 }).eq('id', pending.id);
+
+    if (!ok) return res.status(401).json({ error: 'Invalid OTP' });
+
+    // 2) Create user, then mark pending consumed
+    const existing = await findUserByEmail(email);
+    if (existing) {
+      // Race: someone created already — just consume and return conflict
+      await supabase.from('pending_registrations').update({ consumed_at: new Date().toISOString() }).eq('id', pending.id);
+      return res.status(409).json({ error: 'User with this email already exists' });
+    }
+
+    const { data: userRow, error: insErr } = await supabase
+      .from('app_users')
+      .insert([{
+        name: pending.name,
+        email,
+        password_hash: pending.password_hash,
+        role: 'user'
+      }])
+      .select('*')
+      .single();
+    if (insErr) throw insErr;
+
+    await supabase.from('pending_registrations').update({ consumed_at: new Date().toISOString() }).eq('id', pending.id);
+
+    // Optionally auto-login after verify
+    const token = jwt.sign(
+      { sub: userRow.id, role: userRow.role, email: userRow.email, name: userRow.name },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '1h' }
+    );
+
+    return res.status(201).json({
+      message: 'Registration completed',
+      user: { id: userRow.id, name: userRow.name, email: userRow.email, role: userRow.role },
+      token
+    });
+  } catch (e) {
+    console.error('verifyRegisterOtp error:', e);
+    return res.status(500).json({ error: 'Server error' });
+  }
+};
+
+// POST /register/resend-otp  { email }
+exports.resendRegisterOtp = async (req, res) => {
+  try {
+    const { email: rawEmail } = req.body || {};
+    if (!rawEmail) return res.status(400).json({ error: 'email is required' });
+    const email = String(rawEmail).trim().toLowerCase();
+
+    // If a user already exists, block
+    const existing = await findUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'User with this email already exists' });
+
+    // Ensure there is a pending row (create if missing)
+    const { data: pending } = await supabase
+      .from('pending_registrations')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp_hash = await bcrypt.hash(otp, 10);
+
+    if (!pending) {
+      await supabase.from('pending_registrations').insert([{
+        name: email.split('@')[0],
+        email,
+        password_hash: '$pending$', // placeholder if they didn't start correctly
+        otp_hash,
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      }]);
+    } else {
+      await supabase.from('pending_registrations').update({
+        otp_hash,
+        attempts: 0,
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        consumed_at: null
+      }).eq('email', email);
+    }
+
+    await resend.emails.send({
+      from: RESEND_FROM,
+      to: email,
+      subject: 'Verify your email (OTP)',
+      html: `<p>Your registration OTP is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`
+    });
+
+    return res.status(200).json({ message: 'OTP resent' });
+  } catch (e) {
+    console.error('resendRegisterOtp error:', e);
+    return res.status(500).json({ error: 'Server error' });
+  }
+};
+
 
 // POST /login  { email, password }
 // → Sends OTP (purpose='login'); token issued after /verify-otp
@@ -190,8 +358,8 @@ exports.verifyOtp = async (req, res) => {
     if (!v.ok) {
       const msg =
         v.reason === 'expired' ? 'OTP expired' :
-        v.reason === 'too_many_attempts' ? 'Too many attempts' :
-        'Invalid OTP';
+          v.reason === 'too_many_attempts' ? 'Too many attempts' :
+            'Invalid OTP';
       return res.status(401).json({ error: msg });
     }
 
@@ -280,8 +448,8 @@ exports.verifyResetOtp = async (req, res) => {
     if (!v.ok) {
       const msg =
         v.reason === 'expired' ? 'OTP expired' :
-        v.reason === 'too_many_attempts' ? 'Too many attempts' :
-        'Invalid OTP';
+          v.reason === 'too_many_attempts' ? 'Too many attempts' :
+            'Invalid OTP';
       return res.status(401).json({ error: msg });
     }
 
