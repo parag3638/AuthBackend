@@ -1,7 +1,7 @@
 const express = require('express');
 const { login, verifyOtp, resendOtp } = require('./controllers/authcontroller.js');
 const { requestReset, verifyResetOtp, completeReset } = require('./controllers/authcontroller.js');
-const { register, verifyRegisterOtp, resendRegisterOtp, } = require('../../controllers/authcontroller');
+const { register, verifyRegisterOtp, resendRegisterOtp, } = require('./controllers/authcontroller.js');
 
 const router = express.Router();
 
