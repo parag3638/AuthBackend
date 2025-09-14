@@ -3,13 +3,15 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const { Resend } = require('resend');
+const crypto = require('crypto');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
-const RESEND_FROM = process.env.RESEND_FROM || 'noreply@example.com';
+const RESEND_FROM = process.env.RESEND_FROM || 'noreply@corelytixai.com';
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined; // e.g. .yourdomain.com
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -106,36 +108,52 @@ async function verifyAndConsumeOtp(user_id, otp, purpose) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Cookie helpers (HttpOnly JWT + readable CSRF)
+// ──────────────────────────────────────────────────────────────────────────────
+function secondsFrom(expr) {
+  if (typeof expr === 'number') return expr;
+  const m = String(expr).trim().match(/^(\d+)\s*([smhd])?$/i);
+  if (!m) return 3600; // default 1h
+  const n = parseInt(m[1], 10);
+  const u = (m[2] || 's').toLowerCase();
+  return u === 'h' ? n * 3600 : u === 'm' ? n * 60 : u === 'd' ? n * 86400 : n;
+}
+const ACCESS_MAX_AGE_S = secondsFrom(JWT_EXPIRES_IN);
+
+function buildAuthCookieOptions(maxAgeSeconds = ACCESS_MAX_AGE_S) {
+  return {
+    httpOnly: true,
+    secure: true,              // HTTPS only
+    sameSite: 'none',          // cross-site (Render API <-> Vercel FE)
+    path: '/',
+    maxAge: maxAgeSeconds * 1000,
+    domain: COOKIE_DOMAIN,
+  };
+}
+
+const csrfCookieOptions = {
+  httpOnly: false,             // readable by JS for X-CSRF-Token
+  secure: true,
+  sameSite: 'none',
+  path: '/',
+  maxAge: 60 * 60 * 1000,      // 1h
+  domain: COOKIE_DOMAIN,
+};
+
+function setAuthCookies(res, jwtToken) {
+  const csrf = crypto.randomBytes(24).toString('hex');
+  res.cookie('access_token', jwtToken, buildAuthCookieOptions());
+  res.cookie('csrf_token', csrf, csrfCookieOptions);
+}
+
+function clearAuthCookies(res) {
+  res.cookie('access_token', '', { ...buildAuthCookieOptions(0), maxAge: 0 });
+  res.cookie('csrf_token', '', { ...csrfCookieOptions, maxAge: 0 });
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Controllers
 // ──────────────────────────────────────────────────────────────────────────────
-
-// // POST /register  { name, email, password, role? }
-// exports.register = async (req, res) => {
-//   try {
-//     let { name, email, password, role = 'user' } = req.body || {};
-//     if (!name || !email || !password) {
-//       return res.status(400).json({ error: 'name, email, password are required' });
-//     }
-//     email = String(email).trim();
-
-//     const existing = await findUserByEmail(email);
-//     if (existing) {
-//       return res.status(409).json({ error: 'User with this email already exists' });
-//     }
-
-//     const password_hash = await bcrypt.hash(password, 10);
-//     const user = await insertUser({ name, email, password_hash, role });
-
-//     return res.status(201).json({
-//       message: 'User registered successfully',
-//       user: { id: user.id, name: user.name, email: user.email, role: user.role }
-//     });
-//   } catch (err) {
-//     console.error('Registration error:', err);
-//     return res.status(500).json({ error: 'Server error' });
-//   }
-// };
-
 
 // POST /register  { name, email, password }
 exports.register = async (req, res) => {
@@ -233,17 +251,13 @@ exports.verifyRegisterOtp = async (req, res) => {
 
     await supabase.from('pending_registrations').update({ consumed_at: new Date().toISOString() }).eq('id', pending.id);
 
-    // Optionally auto-login after verify
-    const token = jwt.sign(
-      { sub: userRow.id, role: userRow.role, email: userRow.email, name: userRow.name },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '1h' }
-    );
+    // Auto-login after verify: set cookies (HttpOnly JWT + csrf)
+    const token = signJwt(userRow);
+    setAuthCookies(res, token);
 
     return res.status(201).json({
       message: 'Registration completed',
-      user: { id: userRow.id, name: userRow.name, email: userRow.email, role: userRow.role },
-      token
+      user: { id: userRow.id, name: userRow.name, email: userRow.email, role: userRow.role }
     });
   } catch (e) {
     console.error('verifyRegisterOtp error:', e);
@@ -344,7 +358,7 @@ exports.login = async (req, res) => {
 };
 
 // POST /verify-otp  { email, otp }
-// → Issues JWT after successful OTP verification
+// → Issues JWT via HttpOnly cookie after successful OTP verification
 exports.verifyOtp = async (req, res) => {
   try {
     let { email, otp } = req.body || {};
@@ -364,7 +378,9 @@ exports.verifyOtp = async (req, res) => {
     }
 
     const token = signJwt(user);
-    return res.status(200).json({ message: 'Login successful', token });
+    // Set HttpOnly access_token + readable csrf_token; do not return token in body
+    setAuthCookies(res, token);
+    return res.status(200).json({ message: 'Login successful' });
   } catch (err) {
     console.error('Verify OTP error:', err);
     return res.status(500).json({ error: 'Server error' });
@@ -403,7 +419,7 @@ exports.resendOtp = async (req, res) => {
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Password Reset via Email OTP (same mechanism, purpose='reset')
+/** Password Reset via Email OTP (same mechanism, purpose='reset') */
 // ──────────────────────────────────────────────────────────────────────────────
 
 // POST /password-reset/request  { email }
@@ -499,5 +515,28 @@ exports.completeReset = async (req, res) => {
   } catch (e) {
     console.error('completeReset error', e);
     return res.status(500).json({ error: 'Server error' });
+  }
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Logout (clears cookies)  POST /logout
+// ──────────────────────────────────────────────────────────────────────────────
+exports.logout = async (_req, res) => {
+  try {
+    clearAuthCookies(res);
+    return res.status(204).end();
+  } catch (e) {
+    console.error('logout error', e);
+    return res.status(500).json({ error: 'Server error' });
+  }
+};
+
+// Optional: expose current CSRF (if you want a bootstrap endpoint) GET /csrf
+exports.csrf = async (req, res) => {
+  try {
+    const csrf = req.cookies?.csrf_token || '';
+    return res.status(200).json({ csrfToken: csrf });
+  } catch (e) {
+    return res.status(200).json({ csrfToken: '' });
   }
 };
