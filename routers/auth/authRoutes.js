@@ -13,6 +13,14 @@ const {
   csrf             // NEW
 } = require('./controllers/authcontroller.js');
 
+const {
+  googleStart,
+  googleCallback,
+  verifyGoogleOtp,
+  resendGoogleOtp
+} = require('./controllers/authcontroller.js');
+
+
 const router = express.Router();
 
 // Registration (2-step)
@@ -24,6 +32,11 @@ router.post('/register/resend-otp', resendRegisterOtp);  // optional
 router.post('/login', login);
 router.post('/verify-otp', verifyOtp);
 router.post('/resend-otp', resendOtp);
+
+// Google OAuth -> OTP -> session
+router.get('/google/start', googleStart);
+router.get('/google/callback', googleCallback);
+
 
 // Password reset
 router.post('/password-reset/request', requestReset);

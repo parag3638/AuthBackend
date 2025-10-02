@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const { Resend } = require('resend');
 const crypto = require('crypto');
+const { OAuth2Client } = require('google-auth-library');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -12,6 +13,15 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
 const RESEND_FROM = process.env.RESEND_FROM || 'noreply@corelytixai.com';
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined; // e.g. .yourdomain.com
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const AUTH_PUBLIC_URL = process.env.AUTH_PUBLIC_URL;
+const APP_PUBLIC_URL = process.env.APP_PUBLIC_URL;
+
+const oauthClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+const isProd = process.env.NODE_ENV === 'production';
+
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -151,9 +161,262 @@ function clearAuthCookies(res) {
   res.cookie('csrf_token', '', { ...csrfCookieOptions, maxAge: 0 });
 }
 
+// Dev/prod-safe temp cookie helpers (state/nonce)
+function setTempCookie(res, name, value, maxAgeMs = 5 * 60 * 1000) {
+  res.cookie(name, value, {
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
+    path: "/",
+    maxAge: maxAgeMs,
+    ...(isProd && COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
+  });
+}
+function clearTempCookie(res, name) {
+  res.clearCookie(name, {
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
+    path: "/",
+    ...(isProd && COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
+  });
+}
+
+// Find a user by Google subject (sub)
+async function findUserByGoogleSub(google_sub) {
+  if (!google_sub) return null;
+  const { data, error } = await supabase
+    .from('app_users')
+    .select('*')
+    .eq('google_sub', google_sub)
+    .maybeSingle();
+  if (error && error.code !== 'PGRST116') throw error; // ignore "no rows" shape
+  return data || null;
+}
+
+// Link an existing user to a Google account
+async function linkGoogleToUser(userId, google_sub) {
+  const { data, error } = await supabase
+    .from('app_users')
+    .update({
+      google_sub,
+      email_verified: true,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', userId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// Generic partial updater
+async function updateUser(userId, patch) {
+  const clean = { ...patch, updated_at: new Date().toISOString() };
+  const { data, error } = await supabase
+    .from('app_users')
+    .update(clean)
+    .eq('id', userId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// Create a new user (supports Google fields)
+async function createUser(fields) {
+  // fields can include: name, email, password_hash, role, google_sub, email_verified, picture
+  const toInsert = {
+    role: 'user',
+    ...fields,
+  };
+  const { data, error } = await supabase
+    .from('app_users')
+    .insert([toInsert])
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Controllers
 // ──────────────────────────────────────────────────────────────────────────────
+
+
+
+// ========== GET /google/start ==========
+exports.googleStart = async (req, res) => {
+  try {
+    const state = crypto.randomBytes(24).toString("base64url");
+    const nonce = crypto.randomBytes(16).toString("base64url");
+
+    setTempCookie(res, "g_state", state);
+    setTempCookie(res, "g_nonce", nonce);
+
+    const redirectUri = `${AUTH_PUBLIC_URL}/api/auth/google/callback`;
+    console.log("Google redirect_uri =", redirectUri);
+
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      response_type: "code",
+      redirect_uri: redirectUri,
+      scope: "openid email profile",
+      state,
+      nonce,                       // defense-in-depth
+      access_type: "online",
+      prompt: "select_account",
+      include_granted_scopes: "true",
+    });
+
+    const googleAuthz = "https://accounts.google.com/o/oauth2/v2/auth";
+    return res.redirect(`${googleAuthz}?${params.toString()}`);
+  } catch (e) {
+    console.error("googleStart error", e);
+    return res.status(500).send("Google start failed");
+  }
+};
+
+// ========== GET /google/callback ==========
+exports.googleCallback = async (req, res) => {
+  try {
+    const { code, state } = req.query || {};
+    const stateCookie = req.cookies?.g_state;
+    const nonceCookie = req.cookies?.g_nonce;
+
+    if (!code || !state || !stateCookie || state !== stateCookie) {
+      return res.status(400).send("Invalid OAuth state");
+    }
+
+    // Exchange code -> tokens
+    const redirectUri = `${AUTH_PUBLIC_URL}/api/auth/google/callback`;
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      const t = await tokenRes.text();
+      return res.status(401).send(`Token exchange failed: ${t}`);
+    }
+    const tokens = await tokenRes.json();
+    const idToken = tokens.id_token;
+    if (!idToken) return res.status(401).send("Missing id_token");
+
+    // Verify id_token
+    const ticket = await oauthClient.verifyIdToken({
+      idToken,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload) return res.status(401).send("Bad id_token");
+
+    // Extra hardening
+    const validIss =
+      payload.iss === "https://accounts.google.com" ||
+      payload.iss === "accounts.google.com";
+    if (!validIss) return res.status(401).send("Invalid issuer");
+    if (payload.aud !== GOOGLE_CLIENT_ID)
+      return res.status(401).send("Invalid audience");
+    if (!nonceCookie || payload.nonce !== nonceCookie)
+      return res.status(401).send("Nonce mismatch");
+
+    // Extract normalized profile
+    const sub = payload.sub;
+    const email = (payload.email || "").trim().toLowerCase();
+    const emailVerified = !!payload.email_verified;
+    const name = payload.name || (email ? email.split("@")[0] : "User");
+    const picture = payload.picture || null;
+
+    if (!email || !emailVerified) {
+      return res.status(400).send("Google account email not verified");
+    }
+
+    // Upsert / link user
+    let user;
+    try {
+      // 1) already linked by sub?
+      user = await findUserByGoogleSub(sub);
+
+      if (!user) {
+        // 2) by email
+        const existing = email ? await findUserByEmail(email) : null;
+
+        if (existing) {
+          // If email already linked to another Google, block
+          if (existing.google_sub && existing.google_sub !== sub) {
+            clearTempCookie(res, "g_state");
+            clearTempCookie(res, "g_nonce");
+            return res
+              .status(409)
+              .send("This email is already linked to a different Google account.");
+          }
+
+          // Link if not linked yet
+          if (!existing.google_sub) {
+            await linkGoogleToUser(existing.id, sub);
+          }
+
+          // Upgrade verification & keep user's chosen name/pic if set
+          await updateUser(existing.id, {
+            email_verified: true,
+            picture: existing.picture || picture,
+            name: existing.name || name,
+          });
+
+          user = {
+            ...existing,
+            google_sub: sub,
+            email_verified: true,
+            picture: existing.picture || picture,
+            name: existing.name || name,
+          };
+        } else {
+          // 3) create brand new user
+          user = await createUser({
+            name,
+            email,
+            google_sub: sub,
+            email_verified: true,
+            picture,
+            role: "user",
+            password_hash: "$google$", // sentinel to satisfy NOT NULL
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Google user upsert/link failed", {
+        email,
+        sub,
+        code: err?.code,
+        message: err?.message,
+        details: err,
+      });
+      return res.status(500).send("User creation/linking failed");
+    }
+
+    // Issue your session cookie and redirect
+    const token = signJwt(user);
+    setAuthCookies(res, token);
+
+    // Clean temp cookies
+    clearTempCookie(res, "g_state");
+    clearTempCookie(res, "g_nonce");
+
+    return res.redirect(`${APP_PUBLIC_URL}/vaultx`);
+  } catch (e) {
+    console.error("googleCallback OAuth failure", e);
+    return res.status(500).send("Google OAuth exchange/verification failed");
+  }
+};
+
+
 
 // POST /register  { name, email, password }
 exports.register = async (req, res) => {
@@ -380,6 +643,8 @@ exports.verifyOtp = async (req, res) => {
     const token = signJwt(user);
     // Set HttpOnly access_token + readable csrf_token; do not return token in body
     setAuthCookies(res, token);
+
+
     return res.status(200).json({ message: 'Login successful' });
   } catch (err) {
     console.error('Verify OTP error:', err);
