@@ -5,12 +5,20 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 
+
+const helmet = require("helmet");
+const morgan = require("morgan");
+
 dotenv.config();
 const port = process.env.PORT || 9000;
 
+
+const intakeRoutes = require("./routers/doc/intake");
 const auth = require('./routers/auth/middlewares/authMiddleware');
 const authRoutes = require('./routers/auth/authRoutes');
-const authorizeRoles = require('./routers/auth/middlewares/roleMiddlewares');
+// const authorizeRoles = require('./routers/auth/middlewares/roleMiddlewares');
+const doctor = require("./routers/doc/doctor");
+
 
 // Ensure req.secure is accurate behind proxies (Render)
 app.set('trust proxy', 1);
@@ -46,15 +54,24 @@ app.use(bodyParser.json());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// basics
+app.use(helmet());
+app.use(express.json({ limit: "5mb" }));
+app.use(morgan("dev"));
+
+
 // Routes
 app.use('/api/auth/', authRoutes);
+app.use("/intake", intakeRoutes);
+// app.use("/doctor", authorizeRoles("user"), doctor);
+app.use("/doctor", doctor);
+
 
 app.get('/', (req, res) => {
     res.send('MFA Auth Working!');
 });
 
 app.get('/me', auth, (req, res) => {
-    console.log("User:", req.user);
     res.json({ user: req.user });
 });
 
