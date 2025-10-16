@@ -409,7 +409,7 @@ exports.googleCallback = async (req, res) => {
     clearTempCookie(res, "g_state");
     clearTempCookie(res, "g_nonce");
 
-    return res.redirect(`${APP_PUBLIC_URL}/vaultx`);
+    return res.redirect(`${APP_PUBLIC_URL}/vaultx/dashboard`);
   } catch (e) {
     console.error("googleCallback OAuth failure", e);
     return res.status(500).send("Google OAuth exchange/verification failed");
