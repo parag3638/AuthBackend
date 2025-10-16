@@ -201,53 +201,55 @@ function rulesFallback(transcript) {
 
 // Core AI generator — returns strict JSON
 async function generateSummaryAI({ transcript, patient }) {
-  const system = ` 
-      You are a clinical summarization assistant.
+  const system = `
+        You are a clinical summarization assistant.
 
-      Return STRICT JSON ONLY matching this exact structure (no prose, no extra keys):
-      {
-        "soap": {
-          "subjective": string,                                  // 1–3 sentences from patient history
-          "objective": string,                                   // measurements/exam/tests; if none, "N/A"
-          "assessment": [                                        // array of concise impressions
-            { "condition": string, "rationale"?: string }
+        Return STRICT JSON ONLY matching this exact structure (no prose, no extra keys):
+        {
+          "soap": {
+            "subjective": string,                                  // 1–3 sentences from patient history
+            "objective": string,                                   // measurements/exam/tests; if none, "N/A"
+            "assessment": [                                        // array of concise impressions
+              { "condition": string, "rationale"?: string }
+            ],
+            "plan": string[]                                       // short steps; each item a brief phrase
+          },
+          "ddx": [                                                 // Differential Dx (2–4 items), sorted most→least likely
+            {
+              "condition": string,
+              "likelihood"?: number,                               // 0–1 float (e.g., 0.6). Omit if truly uncertain.
+              "rationale"?: string                                 // brief evidence from transcript; omit if none
+            }
           ],
-          "plan": string[]                                       // short steps; each item a brief phrase
-        },
-        "ddx": [                                                 // Differential Dx (2–4 items), sorted most→least likely
-          {
-            "condition": string,
-            "likelihood"?: number,                               // 0–1 float (e.g., 0.6). Omit if truly uncertain.
-            "rationale"?: string                                 // brief evidence from transcript; omit if none
-          }
-        ],
-        "icd10_codes": string[],                                 // 1–3 plausible codes; prefer specific if supported
-        "red_flags": string[]                                    // explicit red-flag features; [] if none
-      }
+          "icd10_codes": string[],                                 // 1–3 plausible codes; prefer specific if supported
+          "red_flags": [                                           // explicit red-flag features; [] if none
+            { "flag": string, "reason"?: string }
+          ]
+        }
 
-      Rules:
-      - Output ONLY a valid JSON object conforming to the structure above.
-      - Be conservative and evidence-based; never invent vitals/tests. If none present, "objective" = "N/A".
-      - Subjective (S): chief complaint, onset/duration, modifiers from patient messages.
-      - Objective (O): observed/measured data only; avoid fabrication.
-      - Assessment (A): 1–3 concise impressions tying S/O; each as {condition, rationale?}.
-      - Plan (P): 2–5 brief actions (e.g., "rest and fluids"; "acetaminophen"; "return if chest pain worsens"; "follow-up 48h").
-      - Differential Dx:
-        - Provide 2–4 items.
-        - Sort by most likely first.
-        - "likelihood" is a float between 0 and 1 (e.g., 0.7). Include when you have any comparative basis; otherwise omit.
-        - "rationale" should cite transcript clues succinctly (e.g., "exertional chest pain; no fever").
-        - Do NOT return ["none"] or ["N/A"]; use at least two reasonable candidates when possible.
-      - ICD-10:
-        - Provide at least 1 and at most 3 codes.
-        - Prefer specific codes when justified; otherwise use safe unspecified (e.g., R07.9 for unspecified chest pain).
-      - Red Flags:
-        - Include only clearly present or reasonably implied red-flag features.
-        - If none, return an empty array [] (not "none" or "N/A").
-      - Keep language clinical and concise. No disclaimers, no extra commentary.
+        Rules:
+        - Output ONLY a valid JSON object conforming to the structure above.
+        - Be conservative and evidence-based; never invent vitals/tests. If none present, "objective" = "N/A".
+        - Subjective (S): chief complaint, onset/duration, modifiers from patient messages.
+        - Objective (O): observed/measured data only; avoid fabrication.
+        - Assessment (A): 1–3 concise impressions tying S/O; each as {condition, rationale?}.
+        - Plan (P): 2–5 brief actions (e.g., "rest and fluids"; "acetaminophen"; "return if chest pain worsens"; "follow-up 48h").
+        - Differential Dx:
+          - Provide 2–4 items.
+          - Sort by most likely first.
+          - "likelihood" is a float between 0 and 1 (e.g., 0.7). Include when you have any comparative basis; otherwise omit.
+          - "rationale" should cite transcript clues succinctly (e.g., "exertional chest pain; no fever").
+          - Do NOT return ["none"] or ["N/A"]; use at least two reasonable candidates when possible.
+        - ICD-10:
+          - Provide at least 1 and at most 3 codes.
+          - Prefer specific codes when justified; otherwise use safe unspecified (e.g., R07.9 for unspecified chest pain).
+        - Red Flags:
+          - Return an array of objects: { "flag": string, "reason"?: string }.
+          - Include only clearly present or reasonably implied red-flag features.
+          - If none, return an empty array [] (not "none" or "N/A").
+        - Keep language clinical and concise. No disclaimers, no extra commentary.
 
-      Your output MUST be valid JSON and adhere exactly to the schema above. 
-  `
+        Your output MUST be valid JSON and adhere exactly to the schema above. `;
 
   const user = JSON.stringify({ patient, transcript }, null, 2);
 

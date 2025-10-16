@@ -207,6 +207,243 @@ router.get("/inbox.csv", async (req, res) => {
 });
 
 
+// Dashboard
+router.get("/dashboard", async (req, res) => {
+  try {
+    const { data: sessions, error } = await sb
+      .from("intake_sessions")
+      .select(`
+        id,
+        status,
+        submitted_at,
+        closed_at,
+        patient_dob,
+        updated_at,
+        patient_name,
+        clinical_summaries ( ddx, red_flags, updated_at )
+      `)
+      .order("submitted_at", { ascending: true });
+
+    if (error) throw error;
+    if (!sessions?.length) return res.json({ kpis: {}, charts: {} });
+
+    // ---------- KPIs ----------
+    const totalCases = sessions.length;
+    const pendingCases = sessions.filter((s) => s.status === "pending").length;
+    const closedCases = sessions.filter((s) => s.status === "closed").length;
+    const reviewedCases = sessions.filter((s) => s.status === "reviewed").length;
+
+    // Average time to resolution (closed sessions)
+    const closedWithTime = sessions
+      .filter((s) => s.closed_at)
+      .map(
+        (s) =>
+          (new Date(s.closed_at) - new Date(s.submitted_at)) /
+          (1000 * 60 * 60 * 24)
+      ); // days
+    const avgResolutionTime =
+      closedWithTime.length > 0
+        ? closedWithTime.reduce((a, b) => a + b, 0) / closedWithTime.length
+        : 0;
+
+    // Average patient age
+    const today = new Date();
+    const ages = sessions
+      .map((s) => {
+        const dob = new Date(s.patient_dob);
+        if (!isNaN(dob)) return today.getFullYear() - dob.getFullYear();
+        return null;
+      })
+      .filter(Boolean);
+    const avgAge =
+      ages.length > 0 ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : 0;
+
+    // ---------- Time-series (Line Chart) ----------
+    const dailyCounts = {};
+    for (const s of sessions) {
+      const d = new Date(s.submitted_at).toISOString().split("T")[0];
+      dailyCounts[d] = (dailyCounts[d] || 0) + 1;
+    }
+    const lineChart = Object.entries(dailyCounts).map(([date, count]) => ({
+      date,
+      count,
+    }));
+
+    // ---------- Bar Chart (Age distribution) ----------
+    const buckets = { "0-20": 0, "21-40": 0, "41-60": 0, "60+": 0 };
+    for (const a of ages) {
+      if (a <= 20) buckets["0-20"]++;
+      else if (a <= 40) buckets["21-40"]++;
+      else if (a <= 60) buckets["41-60"]++;
+      else buckets["60+"]++;
+    }
+    const barChart = Object.entries(buckets).map(([range, count]) => ({
+      range,
+      count,
+    }));
+
+    // ---------- Pie Chart (Status distribution) ----------
+    const pieChart = [
+      { status: "pending", count: pendingCases },
+      { status: "closed", count: closedCases },
+      { status: "reviewed", count: reviewedCases },
+    ];
+
+    // ---------- Table (recently updated intake sessions) ----------
+    // Columns: Patient | DDx | Red Flags | Status | Updated
+    const safeArr = (x) => (Array.isArray(x) ? x : []);
+    const ddxLabels = (ddx) =>
+      safeArr(ddx)
+        .map((d) => d?.condition)
+        .filter(Boolean);
+
+    const redFlagLabels = (rf) =>
+      safeArr(rf)
+        .map((r) => r?.flag)
+        .filter(Boolean);
+
+    const pickUpdatedAt = (s) =>
+      s?.clinical_summaries?.updated_at || s?.updated_at || s?.submitted_at;
+
+    const tableRows = sessions
+      .sort((a, b) => new Date(pickUpdatedAt(b)) - new Date(pickUpdatedAt(a)))
+      .slice(0, 5)
+      .map((s) => {
+        const ddx = ddxLabels(s?.clinical_summaries?.ddx);
+        const rf = redFlagLabels(s?.clinical_summaries?.red_flags);
+
+        // compact display: show up to 3 items  overflow counter
+        const ddxDisplay = ddx.slice(0, 3);
+        const ddxOverflow = Math.max(ddx.length - ddxDisplay.length, 0);
+        const rfDisplay = rf.slice(0, 2);
+        const rfOverflow = Math.max(rf.length - rfDisplay.length, 0);
+
+        return {
+          id: s.id,
+          patient: s.patient_name || "Anonymous",
+          ddx: ddxDisplay,                // array; front-end can render badges
+          ddx_overflow: ddxOverflow,      // number; render as "N" badge
+          red_flags: rfDisplay,           // array; front-end can render badges
+          red_flags_overflow: rfOverflow, // number; render as "N"
+          status: s.status,
+          updated: pickUpdatedAt(s),
+        };
+      });
+
+    // ---------- Stacked Bar Chart: Conditions by Category ----------
+    const mode = ("unique").toLowerCase(); // "unique" | "codes"
+    // const toPercent = String(req.query.percent || "false") === "true"; // return 100% stacked
+    const toPercent = String("false") === "true"; // return 100% stacked
+
+    const { data: summaries, error: summaryErr } = await sb
+      .from("clinical_summaries")
+      .select("created_at, icd10_codes");  // icd10_codes stored as JSON text
+    if (summaryErr) throw summaryErr;
+
+    // Map ICD-10 first letter → high-level category (extend as needed)
+    const icdCat = (code) => {
+      const p = String(code || "").trim().charAt(0).toUpperCase();
+      if (p === "A" || p === "B") return "Infectious";
+      if (p === "C" || p === "D") return "Neoplasms";                  // C00-D49
+      if (p === "E") return "Endocrine/Metabolic";
+      if (p === "F") return "Mental/Behavioral";
+      if (p === "G") return "Nervous System";
+      if (p === "H") return "Eye/Ear";
+      if (p === "I") return "Circulatory";
+      if (p === "J") return "Respiratory";
+      if (p === "K") return "Digestive";
+      if (p === "L") return "Skin";
+      if (p === "M") return "Musculoskeletal";
+      if (p === "N") return "Genitourinary";
+      if (p === "O") return "Pregnancy/Childbirth";
+      if (p === "P") return "Perinatal";
+      if (p === "Q") return "Congenital";
+      if (p === "R") return "Symptoms/Signs";
+      if (p === "S" || p === "T") return "Injury/Poisoning";
+      if (p === "V" || p === "W" || p === "X" || p === "Y") return "External Causes";
+      if (p === "Z") return "Factors Influencing Health";
+      return "Other";
+    };
+
+    // Aggregate across ALL summaries as one snapshot bar (since you said only one bar for now)
+    const counts = {};   // { category: number }
+    let totalUnits = 0;  // denominator for percent mode
+
+    for (const row of summaries || []) {
+      let codes = [];
+      // try { codes = JSON.parse(row.icd10_codes || "[]"); } catch { }
+      try { codes = (row.icd10_codes || "[]"); } catch { }
+      if (!Array.isArray(codes) || codes.length === 0) continue;
+
+      if (mode === "unique") {
+        // Count each category at most once per summary
+        const cats = new Set(codes.map(icdCat));
+        cats.forEach((c) => {
+          counts[c] = (counts[c] || 0) + 1;
+        });
+        totalUnits += 1; // one unit per summary
+      } else {
+        // mode === "codes" → count every code
+        codes.forEach((code) => {
+          const c = icdCat(code);
+          counts[c] = (counts[c] || 0) + 1;
+          totalUnits += 1; // one unit per code
+        });
+      }
+    }
+
+    // Optionally convert to percentages for 100% stacked display
+    let stackedBar = [{
+      label: "Diagnosis Mix",
+      ...(
+        toPercent && totalUnits > 0
+          ? Object.fromEntries(
+            Object.entries(counts).map(([k, v]) => [k, Number(((v / totalUnits) * 100).toFixed(1))])
+          )
+          : counts
+      )
+    }];
+
+    // Ensure stable key order for frontend (optional)
+    stackedBar = stackedBar.map(obj => {
+      const order = [
+        "Neoplasms", "Endocrine/Metabolic", "Musculoskeletal", "Symptoms/Signs",
+        "Circulatory", "Respiratory", "Digestive", "Genitourinary",
+        "Infectious", "Nervous System", "Eye/Ear", "Skin",
+        "Pregnancy/Childbirth", "Perinatal", "Congenital",
+        "Injury/Poisoning", "External Causes", "Factors Influencing Health", "Other"
+      ];
+      const out = { label: obj.label };
+      for (const k of order) if (obj[k] != null) out[k] = obj[k];
+      // include any unexpected keys
+      for (const [k, v] of Object.entries(obj)) if (!(k in out)) out[k] = v;
+      return out;
+    });
+
+
+    res.json({
+      kpis: {
+        totalCases,
+        pendingCases,
+        closedCases,
+        reviewedCases,
+        avgResolutionTime: Number(avgResolutionTime.toFixed(2)),
+        avgAge,
+      },
+      charts: {
+        lineChart,
+        barChart,
+        pieChart,
+        // stackedChart,
+        stackedChart: stackedBar,
+      },
+      table: tableRows,
+    });
+  } catch (e) {
+    console.error("dashboard error", e);
+    res.status(500).json({ error: e.message || "Server error" });
+  }
+});
 
 // GET /doctor/intake/:id  -> detail view
 router.get("/intake/:id", async (req, res) => {
@@ -266,8 +503,6 @@ router.get("/intake/:id", async (req, res) => {
     return res.status(500).json({ error: e?.message || "Server error" });
   }
 });
-
-
 
 router.post("/intake/:id/close", async (req, res) => {
   try {

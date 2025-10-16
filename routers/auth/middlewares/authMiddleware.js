@@ -54,16 +54,6 @@ async function auth(req, res, next) {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    // if (user.password_updated_at) {
-    //   const tokenIssuedAtMs = (payload.iat || 0) * 1000;
-    //   const pwdUpdatedAtMs = new Date(user.password_updated_at).getTime();
-    //   if (tokenIssuedAtMs < pwdUpdatedAtMs) {
-    //     return res.status(401).json({
-    //       error: 'Token invalid due to password change. Please log in again.',
-    //     });
-    //   }
-    // }
-
     if (user.password_updated_at) {
       const tokenIssuedAtMs = (payload.iat || 0) * 1000;
       const pwdUpdatedAtMs = new Date(user.password_updated_at).getTime();
