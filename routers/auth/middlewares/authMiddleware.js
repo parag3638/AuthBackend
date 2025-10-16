@@ -7,7 +7,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 async function auth(req, res, next) {
   try {
@@ -15,13 +15,13 @@ async function auth(req, res, next) {
     if (req.method === 'OPTIONS') return next();
 
     // CSRF check for unsafe methods: header must match cookie
-    if (UNSAFE_METHODS.has(req.method)) {
-      const csrfHeader = req.get('X-CSRF-Token');
-      const csrfCookie = req.cookies?.csrf_token;
-      if (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie) {
-        return res.status(403).json({ error: 'CSRF validation failed' });
-      }
-    }
+    // if (UNSAFE_METHODS.has(req.method)) {
+    //   const csrfHeader = req.get('X-CSRF-Token');
+    //   const csrfCookie = req.cookies?.csrf_token;
+    //   if (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie) {
+    //     return res.status(403).json({ error: 'CSRF validation failed' });
+    //   }
+    // }
 
     // Prefer JWT from HttpOnly cookie; fallback to Bearer header
     let token = req.cookies?.access_token;
