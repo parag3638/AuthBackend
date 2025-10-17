@@ -6,17 +6,11 @@ const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 
-
 const helmet = require("helmet");
 const morgan = require("morgan");
 
 dotenv.config();
 const port = process.env.PORT || 9000;
-
-
-
-
-
 
 const intakeRoutes = require("./routers/doc/intake");
 const auth = require('./routers/auth/middlewares/authMiddleware');
@@ -26,7 +20,6 @@ const templates = require("./routers/templates/template");
 
 // Trust proxy for secure cookies behind Render/NGINX
 app.set('trust proxy', 1);
-
 
 const allowedOrigins = [
     'http://localhost:3000', // common FE dev port

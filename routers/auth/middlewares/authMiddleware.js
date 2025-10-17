@@ -1,38 +1,29 @@
-// middleware/auth.js (drop-in)
-const jwt = require('jsonwebtoken');
-const { createClient } = require('@supabase/supabase-js');
+// middleware/auth.js
+const jwt = require("jsonwebtoken");
+const { createClient } = require("@supabase/supabase-js");
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-
 async function auth(req, res, next) {
   try {
     // Let CORS preflight pass without auth/CSRF checks
-    if (req.method === 'OPTIONS') return next();
-
-    // CSRF check for unsafe methods: header must match cookie
-    // if (UNSAFE_METHODS.has(req.method)) {
-    //   const csrfHeader = req.get('X-CSRF-Token');
-    //   const csrfCookie = req.cookies?.csrf_token;
-    //   if (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie) {
-    //     return res.status(403).json({ error: 'CSRF validation failed' });
-    //   }
-    // }
+    if (req.method === "OPTIONS") return next();
 
     // Prefer JWT from HttpOnly cookie; fallback to Bearer header
     let token = req.cookies?.access_token;
     if (!token) {
-      const header = req.headers.authorization || req.headers.Authorization || '';
-      if (typeof header === 'string' && header.startsWith('Bearer ')) {
+      const header = req.headers.authorization || req.headers.Authorization || "";
+      if (typeof header === "string" && header.startsWith("Bearer ")) {
         token = header.slice(7);
       }
     }
+
+    // Redirect if no token found
     if (!token) {
-      return res.status(401).json({ error: 'Not authenticated' });
+      return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
     }
 
     // Verify token
@@ -40,32 +31,30 @@ async function auth(req, res, next) {
     try {
       payload = jwt.verify(token, process.env.JWT_SECRET);
     } catch {
-      return res.status(401).json({ error: 'Invalid or expired token' });
+      return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
     }
 
-    // Optional hardening: invalidate tokens issued before last password change
+    // Check user still valid
     const { data: user, error } = await supabase
-      .from('app_users')
-      .select('id, role, password_updated_at')
-      .eq('id', payload.sub)
+      .from("app_users")
+      .select("id, role, password_updated_at")
+      .eq("id", payload.sub)
       .single();
 
     if (error || !user) {
-      return res.status(401).json({ error: 'User not found' });
+      return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
     }
 
     if (user.password_updated_at) {
       const tokenIssuedAtMs = (payload.iat || 0) * 1000;
       const pwdUpdatedAtMs = new Date(user.password_updated_at).getTime();
-      const SKEW_MS = 120000; // 2 minutes tolerance
+      const SKEW_MS = 120000; // 2 min tolerance
       if (pwdUpdatedAtMs - tokenIssuedAtMs > SKEW_MS) {
-        return res.status(401).json({
-          error: 'Token invalid due to password change. Please log in again.',
-        });
+        return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
       }
     }
 
-    // Attach safe user payload to request
+    // Attach safe user payload
     req.user = {
       sub: payload.sub,
       email: payload.email,
@@ -76,8 +65,8 @@ async function auth(req, res, next) {
 
     return next();
   } catch (e) {
-    console.error('auth middleware error:', e);
-    return res.status(500).json({ error: 'Server error' });
+    console.error("auth middleware error:", e);
+    return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
   }
 }
 
