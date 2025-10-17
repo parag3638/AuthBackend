@@ -9,10 +9,8 @@ const supabase = createClient(
 
 async function auth(req, res, next) {
   try {
-    // Let CORS preflight pass without auth/CSRF checks
     if (req.method === "OPTIONS") return next();
 
-    // Prefer JWT from HttpOnly cookie; fallback to Bearer header
     let token = req.cookies?.access_token;
     if (!token) {
       const header = req.headers.authorization || req.headers.Authorization || "";
@@ -21,20 +19,17 @@ async function auth(req, res, next) {
       }
     }
 
-    // Redirect if no token found
     if (!token) {
-      return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
+      return res.status(401).json({ error: "unauthenticated" });
     }
 
-    // Verify token
     let payload;
     try {
       payload = jwt.verify(token, process.env.JWT_SECRET);
     } catch {
-      return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
+      return res.status(401).json({ error: "unauthenticated" });
     }
 
-    // Check user still valid
     const { data: user, error } = await supabase
       .from("app_users")
       .select("id, role, password_updated_at")
@@ -42,19 +37,18 @@ async function auth(req, res, next) {
       .single();
 
     if (error || !user) {
-      return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
+      return res.status(401).json({ error: "unauthenticated" });
     }
 
     if (user.password_updated_at) {
       const tokenIssuedAtMs = (payload.iat || 0) * 1000;
       const pwdUpdatedAtMs = new Date(user.password_updated_at).getTime();
-      const SKEW_MS = 120000; // 2 min tolerance
+      const SKEW_MS = 120000;
       if (pwdUpdatedAtMs - tokenIssuedAtMs > SKEW_MS) {
-        return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
+        return res.status(401).json({ error: "unauthenticated" });
       }
     }
 
-    // Attach safe user payload
     req.user = {
       sub: payload.sub,
       email: payload.email,
@@ -66,7 +60,7 @@ async function auth(req, res, next) {
     return next();
   } catch (e) {
     console.error("auth middleware error:", e);
-    return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
+    return res.status(401).json({ error: "unauthenticated" });
   }
 }
 
