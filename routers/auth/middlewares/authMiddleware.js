@@ -23,7 +23,7 @@ async function auth(req, res, next) {
 
     // Redirect if no token found
     if (!token) {
-      return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
+      return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
     }
 
     // Verify token
@@ -31,7 +31,7 @@ async function auth(req, res, next) {
     try {
       payload = jwt.verify(token, process.env.JWT_SECRET);
     } catch {
-      return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
+      return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
     }
 
     // Check user still valid
@@ -42,7 +42,7 @@ async function auth(req, res, next) {
       .single();
 
     if (error || !user) {
-      return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
+      return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
     }
 
     if (user.password_updated_at) {
@@ -50,7 +50,7 @@ async function auth(req, res, next) {
       const pwdUpdatedAtMs = new Date(user.password_updated_at).getTime();
       const SKEW_MS = 120000; // 2 min tolerance
       if (pwdUpdatedAtMs - tokenIssuedAtMs > SKEW_MS) {
-        return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
+        return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
       }
     }
 
@@ -66,7 +66,7 @@ async function auth(req, res, next) {
     return next();
   } catch (e) {
     console.error("auth middleware error:", e);
-    return res.redirect(`${process.env.APP_PUBLIC_URL}/vaultx/dashboard`);
+    return res.redirect(`${process.env.APP_PUBLIC_URL}login`);
   }
 }
 
