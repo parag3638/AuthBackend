@@ -141,24 +141,24 @@ function buildAuthCookieOptions(maxAgeSeconds = ACCESS_MAX_AGE_S) {
   };
 }
 
-const csrfCookieOptions = {
-  httpOnly: false,             // readable by JS for X-CSRF-Token
-  secure: true,
-  sameSite: 'none',
-  path: '/',
-  maxAge: 60 * 60 * 1000,      // 1h
-  domain: COOKIE_DOMAIN,
-};
+// const csrfCookieOptions = {
+//   httpOnly: false,             // readable by JS for X-CSRF-Token
+//   secure: true,
+//   sameSite: 'none',
+//   path: '/',
+//   maxAge: 60 * 60 * 1000,      // 1h
+//   domain: COOKIE_DOMAIN,
+// };
 
 function setAuthCookies(res, jwtToken) {
   const csrf = crypto.randomBytes(24).toString('hex');
   res.cookie('access_token', jwtToken, buildAuthCookieOptions());
-  res.cookie('csrf_token', csrf, csrfCookieOptions);
+  // res.cookie('csrf_token', csrf, csrfCookieOptions);
 }
 
 function clearAuthCookies(res) {
   res.cookie('access_token', '', { ...buildAuthCookieOptions(0), maxAge: 0 });
-  res.cookie('csrf_token', '', { ...csrfCookieOptions, maxAge: 0 });
+  // res.cookie('csrf_token', '', { ...csrfCookieOptions, maxAge: 0 });
 }
 
 // Dev/prod-safe temp cookie helpers (state/nonce)
@@ -796,12 +796,12 @@ exports.logout = async (_req, res) => {
   }
 };
 
-// Optional: expose current CSRF (if you want a bootstrap endpoint) GET /csrf
-exports.csrf = async (req, res) => {
-  try {
-    const csrf = req.cookies?.csrf_token || '';
-    return res.status(200).json({ csrfToken: csrf });
-  } catch (e) {
-    return res.status(200).json({ csrfToken: '' });
-  }
-};
+// // Optional: expose current CSRF (if you want a bootstrap endpoint) GET /csrf
+// exports.csrf = async (req, res) => {
+//   try {
+//     const csrf = req.cookies?.csrf_token || '';
+//     return res.status(200).json({ csrfToken: csrf });
+//   } catch (e) {
+//     return res.status(200).json({ csrfToken: '' });
+//   }
+// };

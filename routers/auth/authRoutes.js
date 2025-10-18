@@ -10,7 +10,7 @@ const {
   verifyRegisterOtp,
   resendRegisterOtp,
   logout,          // NEW
-  csrf             // NEW
+  // csrf             // NEW
 } = require('./controllers/authcontroller.js');
 
 const {
@@ -45,6 +45,6 @@ router.post('/password-reset/complete', completeReset);
 
 // Auth cookie utilities
 router.post('/logout', logout);  // clears HttpOnly auth cookie + csrf cookie
-router.get('/csrf', csrf);       // returns current csrf token (if you want to bootstrap header)
+// router.get('/csrf', csrf);       // returns current csrf token (if you want to bootstrap header)
 
 module.exports = router;
