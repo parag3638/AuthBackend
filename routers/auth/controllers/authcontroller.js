@@ -284,7 +284,8 @@ exports.googleCallback = async (req, res) => {
     const nonceCookie = req.cookies?.g_nonce;
 
     if (!code || !state || !stateCookie || state !== stateCookie) {
-      return res.status(400).send("Invalid OAuth state");
+      // return res.status(400).send("Invalid OAuth state");
+      return res.redirect(`${APP_PUBLIC_URL}/login`);
     }
 
     // Exchange code -> tokens
@@ -303,7 +304,8 @@ exports.googleCallback = async (req, res) => {
 
     if (!tokenRes.ok) {
       const t = await tokenRes.text();
-      return res.status(401).send(`Token exchange failed: ${t}`);
+      // return res.status(401).send(`Token exchange failed: ${t}`);
+      return res.redirect(`${APP_PUBLIC_URL}/login`);
     }
     const tokens = await tokenRes.json();
     const idToken = tokens.id_token;
