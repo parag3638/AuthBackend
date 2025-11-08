@@ -19,6 +19,7 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
+    "dayjs": "^1.11.19",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "express-rate-limit": "^8.1.0",
@@ -34,6 +35,8 @@
     "path": "^0.12.7",
     "pdfkit": "^0.17.2",
     "resend": "^4.8.0",
+    "rss-parser": "^3.13.0",
+    "sentiment": "^5.0.2",
     "zod": "^4.1.11"
   }
 }

@@ -21,6 +21,43 @@ const APP_PUBLIC_URL = process.env.APP_PUBLIC_URL;
 
 const oauthClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 const isProd = process.env.NODE_ENV === 'production';
+const APP_PUBLIC_ORIGIN = (() => {
+  if (!APP_PUBLIC_URL) return '*';
+  try {
+    return new URL(APP_PUBLIC_URL).origin;
+  } catch (err) {
+    return APP_PUBLIC_URL;
+  }
+})();
+const DEFAULT_APP_REDIRECT =
+  process.env.APP_DEFAULT_REDIRECT_URL ||
+  (APP_PUBLIC_URL ? `${APP_PUBLIC_URL}/vaultx/dashboard` : null);
+const DEFAULT_LOGIN_REDIRECT =
+  process.env.APP_DEFAULT_LOGIN_URL ||
+  (APP_PUBLIC_URL ? `${APP_PUBLIC_URL}/login` : null);
+const APP_ALLOWED_ORIGINS = (() => {
+  const raw =
+    process.env.APP_ALLOWED_ORIGINS ||
+    process.env.APP_ALLOWED_REDIRECT_ORIGINS ||
+    '';
+  const seeds = [
+    ...(APP_PUBLIC_URL ? [APP_PUBLIC_URL] : []),
+    ...raw.split(',').map((s) => s.trim()).filter(Boolean),
+  ];
+  const deduped = [];
+  for (const seed of seeds) {
+    try {
+      const origin = new URL(seed).origin;
+      if (!deduped.includes(origin)) deduped.push(origin);
+    } catch (err) {
+      // ignore invalid entries so one bad value doesn't break startup
+    }
+  }
+  if (!deduped.length && APP_PUBLIC_ORIGIN && APP_PUBLIC_ORIGIN !== '*') {
+    deduped.push(APP_PUBLIC_ORIGIN);
+  }
+  return deduped;
+})();
 
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -180,6 +217,70 @@ function clearTempCookie(res, name) {
   });
 }
 
+function sendPopupResponse(res, payload, targetOrigin = APP_PUBLIC_ORIGIN || '*') {
+  const safeJson = JSON.stringify(payload).replace(/</g, '\\u003c');
+  const resolvedOrigin = targetOrigin || APP_PUBLIC_ORIGIN || '*';
+  const html = `<!DOCTYPE html><html><body><script>
+    (function () {
+      const data = ${safeJson};
+      const origin = ${JSON.stringify(resolvedOrigin || '*')};
+      try {
+        if (window.opener && typeof window.opener.postMessage === "function") {
+          window.opener.postMessage(data, origin || "*");
+        }
+      } catch (err) {
+        console.error(err);
+      }
+      window.close();
+    }());
+  </script>
+  <p>You can close this window.</p>
+  </body></html>`;
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  return res.send(html);
+}
+
+function sanitizeRedirectTarget(target) {
+  if (!target) return null;
+  const trimmed = String(target).trim();
+  if (!trimmed) return null;
+  const hasProtocol = /^https?:\/\//i.test(trimmed);
+  const base = APP_PUBLIC_ORIGIN && APP_PUBLIC_ORIGIN !== '*' ? `${APP_PUBLIC_ORIGIN}/` : undefined;
+  try {
+    const absolute = hasProtocol
+      ? new URL(trimmed)
+      : base
+        ? new URL(trimmed, base)
+        : null;
+    if (!absolute) return null;
+    if (APP_ALLOWED_ORIGINS.length && !APP_ALLOWED_ORIGINS.includes(absolute.origin)) {
+      return null;
+    }
+    return absolute.toString();
+  } catch (err) {
+    return null;
+  }
+}
+
+function resolveRedirectTarget(preferred) {
+  return (
+    sanitizeRedirectTarget(preferred) ||
+    DEFAULT_APP_REDIRECT ||
+    (APP_PUBLIC_URL ? `${APP_PUBLIC_URL}` : '/')
+  );
+}
+
+function resolvePopupOrigin(redirectUrl) {
+  try {
+    if (redirectUrl) {
+      return new URL(redirectUrl).origin;
+    }
+  } catch (err) {
+    // fall through to default origin
+  }
+  return APP_PUBLIC_ORIGIN || '*';
+}
+
 // Find a user by Google subject (sub)
 async function findUserByGoogleSub(google_sub) {
   if (!google_sub) return null;
@@ -247,11 +348,26 @@ async function createUser(fields) {
 // ========== GET /google/start ==========
 exports.googleStart = async (req, res) => {
   try {
+    const popupParam = (req.query?.mode || req.query?.popup || '').toString().toLowerCase();
+    const isPopup = popupParam === '1' || popupParam === 'true' || popupParam === 'popup';
     const state = crypto.randomBytes(24).toString("base64url");
     const nonce = crypto.randomBytes(16).toString("base64url");
+    const returnParam =
+      req.query?.redirect ||
+      req.query?.returnTo ||
+      req.query?.return_to ||
+      req.query?.next ||
+      req.query?.from;
+    const finalRedirect = resolveRedirectTarget(returnParam);
 
     setTempCookie(res, "g_state", state);
     setTempCookie(res, "g_nonce", nonce);
+    if (isPopup) {
+      setTempCookie(res, "g_mode", "popup");
+    } else {
+      clearTempCookie(res, "g_mode");
+    }
+    setTempCookie(res, "g_redirect", finalRedirect);
 
     const redirectUri = `${AUTH_PUBLIC_URL}/api/auth/google/callback`;
     console.log("Google redirect_uri =", redirectUri);
@@ -278,14 +394,37 @@ exports.googleStart = async (req, res) => {
 
 // ========== GET /google/callback ==========
 exports.googleCallback = async (req, res) => {
+  const redirectCookie = req.cookies?.g_redirect;
+  const finalRedirectUrl = resolveRedirectTarget(redirectCookie);
+  const popupOrigin = resolvePopupOrigin(finalRedirectUrl);
   try {
     const { code, state } = req.query || {};
     const stateCookie = req.cookies?.g_state;
     const nonceCookie = req.cookies?.g_nonce;
+    const modeCookie = req.cookies?.g_mode;
+    const isPopup = modeCookie === "popup";
+
+    const finishError = (message, options = {}) => {
+      clearTempCookie(res, "g_state");
+      clearTempCookie(res, "g_nonce");
+      clearTempCookie(res, "g_mode");
+      clearTempCookie(res, "g_redirect");
+      if (isPopup) {
+        return sendPopupResponse(res, {
+          type: "google-oauth-error",
+          error: message,
+          status: options.statusCode || 400,
+        }, popupOrigin);
+      }
+      if (options.redirect) {
+        return res.redirect(options.redirect);
+      }
+      const status = options.statusCode || 400;
+      return res.status(status).send(message);
+    };
 
     if (!code || !state || !stateCookie || state !== stateCookie) {
-      // return res.status(400).send("Invalid OAuth state");
-      return res.redirect(`${APP_PUBLIC_URL}/login`);
+      return finishError("Invalid OAuth state", { redirect: DEFAULT_LOGIN_REDIRECT || '/' });
     }
 
     // Exchange code -> tokens
@@ -304,12 +443,11 @@ exports.googleCallback = async (req, res) => {
 
     if (!tokenRes.ok) {
       const t = await tokenRes.text();
-      // return res.status(401).send(`Token exchange failed: ${t}`);
-      return res.redirect(`${APP_PUBLIC_URL}/login`);
+      return finishError(`Token exchange failed: ${t}`, { redirect: DEFAULT_LOGIN_REDIRECT || '/' });
     }
     const tokens = await tokenRes.json();
     const idToken = tokens.id_token;
-    if (!idToken) return res.status(401).send("Missing id_token");
+    if (!idToken) return finishError("Missing id_token", { statusCode: 401 });
 
     // Verify id_token
     const ticket = await oauthClient.verifyIdToken({
@@ -317,17 +455,17 @@ exports.googleCallback = async (req, res) => {
       audience: GOOGLE_CLIENT_ID,
     });
     const payload = ticket.getPayload();
-    if (!payload) return res.status(401).send("Bad id_token");
+    if (!payload) return finishError("Bad id_token", { statusCode: 401 });
 
     // Extra hardening
     const validIss =
       payload.iss === "https://accounts.google.com" ||
       payload.iss === "accounts.google.com";
-    if (!validIss) return res.status(401).send("Invalid issuer");
+    if (!validIss) return finishError("Invalid issuer", { statusCode: 401 });
     if (payload.aud !== GOOGLE_CLIENT_ID)
-      return res.status(401).send("Invalid audience");
+      return finishError("Invalid audience", { statusCode: 401 });
     if (!nonceCookie || payload.nonce !== nonceCookie)
-      return res.status(401).send("Nonce mismatch");
+      return finishError("Nonce mismatch", { statusCode: 401 });
 
     // Extract normalized profile
     const sub = payload.sub;
@@ -337,7 +475,7 @@ exports.googleCallback = async (req, res) => {
     const picture = payload.picture || null;
 
     if (!email || !emailVerified) {
-      return res.status(400).send("Google account email not verified");
+      return finishError("Google account email not verified", { statusCode: 400 });
     }
 
     // Upsert / link user
@@ -353,11 +491,9 @@ exports.googleCallback = async (req, res) => {
         if (existing) {
           // If email already linked to another Google, block
           if (existing.google_sub && existing.google_sub !== sub) {
-            clearTempCookie(res, "g_state");
-            clearTempCookie(res, "g_nonce");
-            return res
-              .status(409)
-              .send("This email is already linked to a different Google account.");
+            return finishError("This email is already linked to a different Google account.", {
+              statusCode: 409,
+            });
           }
 
           // Link if not linked yet
@@ -400,7 +536,7 @@ exports.googleCallback = async (req, res) => {
         message: err?.message,
         details: err,
       });
-      return res.status(500).send("User creation/linking failed");
+      return finishError("User creation/linking failed", { statusCode: 500 });
     }
 
     // Issue your session cookie and redirect
@@ -410,10 +546,33 @@ exports.googleCallback = async (req, res) => {
     // Clean temp cookies
     clearTempCookie(res, "g_state");
     clearTempCookie(res, "g_nonce");
+    clearTempCookie(res, "g_mode");
+    clearTempCookie(res, "g_redirect");
 
-    return res.redirect(`${APP_PUBLIC_URL}/vaultx/dashboard`);
+    if (isPopup) {
+      return sendPopupResponse(res, {
+        type: "google-oauth-success",
+        success: true,
+        redirect: finalRedirectUrl,
+      }, popupOrigin);
+    }
+
+    return res.redirect(finalRedirectUrl);
   } catch (e) {
     console.error("googleCallback OAuth failure", e);
+    const modeCookie = req.cookies?.g_mode;
+    const isPopup = modeCookie === "popup";
+    clearTempCookie(res, "g_state");
+    clearTempCookie(res, "g_nonce");
+    clearTempCookie(res, "g_mode");
+    clearTempCookie(res, "g_redirect");
+    if (isPopup) {
+      return sendPopupResponse(res, {
+        type: "google-oauth-error",
+        error: "Google OAuth exchange/verification failed",
+        status: 500,
+      }, popupOrigin);
+    }
     return res.status(500).send("Google OAuth exchange/verification failed");
   }
 };

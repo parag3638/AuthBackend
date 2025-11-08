@@ -17,6 +17,9 @@ const auth = require('./routers/auth/middlewares/authMiddleware');
 const authRoutes = require('./routers/auth/authRoutes');
 const doctor = require("./routers/doc/doctor");
 const templates = require("./routers/templates/template");
+const instrumentPrices = require("./routers/instrumentPrices/prices");
+const news = require("./routers/news/news");
+const calendar = require("./routers/calendar/calendar");
 
 // Trust proxy for secure cookies behind Render/NGINX
 app.set('trust proxy', 1);
@@ -58,26 +61,6 @@ app.use(express.json({ limit: "5mb" }));
 app.use(morgan("dev"));
 
 
-// // Seeds a readable CSRF cookie for GET/HEAD (client echoes it in X-CSRF-Token)
-// function seedCsrf(req, res, next) {
-//     // Only seed on safe methods; your auth middleware enforces on unsafe ones.
-//     if ((req.method === 'GET' || req.method === 'HEAD') && !req.cookies?.csrf_token) {
-//         const token = crypto.randomBytes(24).toString('hex');
-//         res.cookie('csrf_token', token, {
-//             httpOnly: false,          // must be readable by FE to mirror into header
-//             sameSite: 'lax',
-//             secure: process.env.NODE_ENV === 'production',
-//             path: '/',
-//             maxAge: 1000 * 60 * 60 * 8, // 8h
-//         });
-//         // (Optional) also expose via header to make first fetch simpler
-//         res.setHeader('X-CSRF-Token', token);
-//     }
-//     next();
-// }
-
-// app.use(seedCsrf);
-
 
 // Routes
 app.use('/api/auth/', authRoutes);
@@ -86,6 +69,12 @@ app.use("/intake", intakeRoutes);
 
 app.use("/doctor", auth, doctor);
 // app.use('/doctor', auth, doctor);
+
+app.use('/prices', instrumentPrices);
+
+app.use('/mood', news);
+
+app.use('/calendar', calendar);
 
 app.get('/', (req, res) => {
     res.send('MFA Auth Working!');
