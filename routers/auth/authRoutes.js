@@ -9,15 +9,16 @@ const {
   register,
   verifyRegisterOtp,
   resendRegisterOtp,
+  googleStartGet,
+  googleStartPost,
+  // googleCallbackGet,
   logout,          // NEW
   // csrf             // NEW
 } = require('./controllers/authcontroller.js');
 
 const {
-  googleStart,
+  // googleStart,
   googleCallback,
-  verifyGoogleOtp,
-  resendGoogleOtp
 } = require('./controllers/authcontroller.js');
 
 
@@ -33,9 +34,17 @@ router.post('/login', login);
 router.post('/verify-otp', verifyOtp);
 router.post('/resend-otp', resendOtp);
 
-// Google OAuth -> OTP -> session
-router.get('/google/start', googleStart);
-router.get('/google/callback', googleCallback);
+// // Google OAuth -> OTP -> session
+// router.get('/google/start', googleStart);
+// router.get('/google/callback', googleCallback);
+
+// ========== routes ==========
+// router.post("/google/start", googleStartPost);
+// router.get("/google/callbackGet", googleCallbackGet);
+
+router.get("/google/start", googleStartGet);
+router.post("/google/start", googleStartPost);
+router.get("/google/callback", googleCallback);
 
 
 // Password reset

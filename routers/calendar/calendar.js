@@ -1,22 +1,3 @@
-// routes/calendar.api.js
-// One-file Express router (CommonJS) for AlphaPulse Calendar (read APIs)
-// Backed by two tables only: market_data.calendar_events, market_data.calendar_event_sentiment
-//
-// Endpoints:
-//   GET  /healthz
-//   GET  /calendar/events                → list with filters + cursor; joined with sentiment
-//   GET  /calendar/events/:id            → single event + sentiment
-//   GET  /calendar/summary               → aggregates for filters panel & KPI chips
-//   GET  /calendar/sentiment/overview    → score histogram + trend counts within window
-//
-// Usage:
-//   const express = require("express");
-//   const app = express();
-//   const calendarApi = require("./routes/calendar.api");
-//   app.use(express.json());
-//   app.use("/", calendarApi);
-//   app.listen(8000);
-
 const express = require("express");
 const router = express.Router();
 const { createClient } = require("@supabase/supabase-js");
@@ -116,11 +97,6 @@ router.get("/events", async (req, res) => {
     if (cur?.datetime_utc && cur?.id) {
       const cdt = encodeURIComponent(cur.datetime_utc);
       const cid = encodeURIComponent(cur.id);
-      // supabase or() syntax
-      // query = query.or(
-      //   `datetime_utc.gt.${cdt},and(datetime_utc.eq.${cdt},id.gt.${cid})`
-      // );
-
       query = query.or(`datetime_utc.gt.${cur.datetime_utc},and(datetime_utc.eq.${cur.datetime_utc},id.gt.${cur.id})`)
 
     }
