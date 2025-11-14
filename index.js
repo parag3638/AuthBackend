@@ -20,6 +20,7 @@ const templates = require("./routers/templates/template");
 const instrumentPrices = require("./routers/instrumentPrices/prices");
 const news = require("./routers/news/news");
 const calendar = require("./routers/calendar/calendar");
+const finDash = require("./routers/finDash/dashboard");
 
 // Trust proxy for secure cookies behind Render/NGINX
 app.set('trust proxy', 1);
@@ -70,11 +71,13 @@ app.use("/intake", intakeRoutes);
 app.use("/doctor", auth, doctor);
 // app.use('/doctor', auth, doctor);
 
-app.use('/prices', instrumentPrices);
+app.use('/prices', auth, instrumentPrices);
 
-app.use('/mood', news);
+app.use('/mood', auth, news);
 
-app.use('/calendar', calendar);
+app.use('/calendar', auth, calendar);
+
+app.use('/finance', auth, finDash);
 
 app.get('/', (req, res) => {
     res.send('MFA Auth Working!');
