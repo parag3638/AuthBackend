@@ -7,30 +7,34 @@ const BASE_SOURCES = "site:moneycontrol.com OR site:reuters.com OR site:economic
 const CRYPTO_SOURCES = "site:coindesk.com OR site:cointelegraph.com OR site:reuters.com OR site:bloomberg.com";
 
 const BASE_INSTRUMENTS = [
-    { symbol: "EURINR", instrument: "EUR/INR", type: "forex" },
-    { symbol: "USDINR", instrument: "USD/INR", type: "forex" },
-    { symbol: "INFY", instrument: "Infosys Ltd", type: "equity" },
-    { symbol: "TCS", instrument: "Tata Consultancy Services", type: "equity" },
-    { symbol: "RELIANCE", instrument: "Reliance Industries", type: "equity" },
-    { symbol: "ICICIBANK", instrument: "ICICI Bank", type: "equity" },
-    { symbol: "HDFCBANK", instrument: "HDFC Bank", type: "equity" },
-    { symbol: "BTCUSDT", instrument: "Bitcoin / USDT", type: "crypto" },
-    { symbol: "ETHUSDT", instrument: "Ethereum / USDT", type: "crypto" },
+  { symbol: "EURUSD", instrument: "EUR/USD", type: "forex" },
+  { symbol: "EURINR", instrument: "EUR/INR", type: "forex" },
+  { symbol: "USDINR", instrument: "USD/INR", type: "forex" },
+  { symbol: "INFY", instrument: "Infosys Ltd", type: "equity" },
+  { symbol: "TCS", instrument: "Tata Consultancy Services", type: "equity" },
+  { symbol: "RELIANCE", instrument: "Reliance Industries", type: "equity" },
+  { symbol: "ICICIBANK", instrument: "ICICI Bank", type: "equity" },
+  { symbol: "HDFCBANK", instrument: "HDFC Bank", type: "equity" },
+  { symbol: "SBIN", instrument: "State Bank of India", type: "equity" },
+  { symbol: "BTCUSDT", instrument: "Bitcoin / USDT", type: "crypto" },
+  { symbol: "ETHUSDT", instrument: "Ethereum / USDT", type: "crypto" },
+  { symbol: "SOLUSDT", instrument: "Solana / USDT", type: "crypto" },
+
 ];
 
 const INSTRUMENTS = Object.fromEntries(
-    BASE_INSTRUMENTS.map(({ symbol, instrument, type }) => {
-        let query;
+  BASE_INSTRUMENTS.map(({ symbol, instrument, type }) => {
+    let query;
 
-        if (type === "forex") {
-            query = `${symbol} OR ${instrument} OR exchange rate ${BASE_SOURCES}`;
-        } else if (type === "crypto") {
-            query = `${symbol} OR ${instrument} OR crypto OR price ${CRYPTO_SOURCES}`;
-        } else {
-            query = `${symbol} OR ${instrument} stock ${BASE_SOURCES}`;
-        }
-        return [symbol, { instrument, query }];
-    })
+    if (type === "forex") {
+      query = `${symbol} OR ${instrument} OR exchange rate ${BASE_SOURCES}`;
+    } else if (type === "crypto") {
+      query = `${symbol} OR ${instrument} OR crypto OR price ${CRYPTO_SOURCES}`;
+    } else {
+      query = `${symbol} OR ${instrument} stock ${BASE_SOURCES}`;
+    }
+    return [symbol, { instrument, query }];
+  })
 );
 
 
