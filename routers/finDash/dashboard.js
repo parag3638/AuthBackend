@@ -38,77 +38,78 @@ const safeNum = (x, def = null) => {
 
 // --------------------------- PRICES HELPERS ---------------------
 // Mirrors your prices.js logic: 1m LTP vs previous 1d close
-async function fetchLatestBar1m(instrumentId) {
-    const { data, error } = await sb
-        .from("price_bars_1m")
-        .select("open,high,low,close,volume,ts")
-        .eq("instrument_id", instrumentId)
-        .order("ts", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-    if (error) throw error;
-    return data || null;
-}
 
-async function fetchDailyChangeIntraday(instrumentId) {
-    const today = new Date().toISOString().slice(0, 10);
+// async function fetchLatestBar1m(instrumentId) {
+//     const { data, error } = await sb
+//         .from("price_bars_1m")
+//         .select("open,high,low,close,volume,ts")
+//         .eq("instrument_id", instrumentId)
+//         .order("ts", { ascending: false })
+//         .limit(1)
+//         .maybeSingle();
+//     if (error) throw error;
+//     return data || null;
+// }
 
-    // prev official close
-    const { data: prevRows, error: prevErr } = await sb
-        .from("price_bars_1d")
-        .select("dt, close")
-        .eq("instrument_id", instrumentId)
-        .lt("dt", today)
-        .order("dt", { ascending: false })
-        .limit(1);
-    if (prevErr) throw prevErr;
+// async function fetchDailyChangeIntraday(instrumentId) {
+//     const today = new Date().toISOString().slice(0, 10);
 
-    const prevClose = prevRows?.[0]?.close != null ? Number(prevRows[0].close) : null;
-    const prevDt = prevRows?.[0]?.dt ?? null;
+//     // prev official close
+//     const { data: prevRows, error: prevErr } = await sb
+//         .from("price_bars_1d")
+//         .select("dt, close")
+//         .eq("instrument_id", instrumentId)
+//         .lt("dt", today)
+//         .order("dt", { ascending: false })
+//         .limit(1);
+//     if (prevErr) throw prevErr;
 
-    // latest intraday
-    const bar = await fetchLatestBar1m(instrumentId);
-    const lastPrice = bar?.close != null ? Number(bar.close) : null;
-    const lastTs = bar?.ts ?? null;
+//     const prevClose = prevRows?.[0]?.close != null ? Number(prevRows[0].close) : null;
+//     const prevDt = prevRows?.[0]?.dt ?? null;
 
-    if (lastPrice == null || prevClose == null) {
-        // fallback: two latest daily closes
-        const { data: dailies, error: dErr } = await sb
-            .from("price_bars_1d")
-            .select("dt, close")
-            .eq("instrument_id", instrumentId)
-            .order("dt", { ascending: false })
-            .limit(3);
-        if (dErr) throw dErr;
+//     // latest intraday
+//     const bar = await fetchLatestBar1m(instrumentId);
+//     const lastPrice = bar?.close != null ? Number(bar.close) : null;
+//     const lastTs = bar?.ts ?? null;
 
-        const unique = [];
-        const seen = new Set();
-        for (const r of dailies || []) {
-            if (!seen.has(r.dt)) {
-                seen.add(r.dt);
-                unique.push(r);
-            }
-            if (unique.length === 2) break;
-        }
-        const latest = unique[0];
-        const prev = unique[1];
+//     if (lastPrice == null || prevClose == null) {
+//         // fallback: two latest daily closes
+//         const { data: dailies, error: dErr } = await sb
+//             .from("price_bars_1d")
+//             .select("dt, close")
+//             .eq("instrument_id", instrumentId)
+//             .order("dt", { ascending: false })
+//             .limit(3);
+//         if (dErr) throw dErr;
 
-        const lastClose = latest?.close != null ? Number(latest.close) : null;
-        const prevClose2 = prev?.close != null ? Number(prev.close) : null;
+//         const unique = [];
+//         const seen = new Set();
+//         for (const r of dailies || []) {
+//             if (!seen.has(r.dt)) {
+//                 seen.add(r.dt);
+//                 unique.push(r);
+//             }
+//             if (unique.length === 2) break;
+//         }
+//         const latest = unique[0];
+//         const prev = unique[1];
 
-        if (lastClose == null || prevClose2 == null) {
-            return { lastPrice, prevClose, change: null, change_pct: null, last_dt: latest?.dt ?? null, basis: "fallback-none" };
-        }
-        const change = lastClose - prevClose2;
-        const change_pct = prevClose2 !== 0 ? (change / prevClose2) * 100 : null;
-        return { lastPrice: lastClose, prevClose: prevClose2, change, change_pct, last_dt: latest.dt, basis: "two-distinct-daily-closes" };
-    }
+//         const lastClose = latest?.close != null ? Number(latest.close) : null;
+//         const prevClose2 = prev?.close != null ? Number(prev.close) : null;
 
-    // primary path
-    const change = lastPrice - prevClose;
-    const change_pct = prevClose !== 0 ? (change / prevClose) * 100 : null;
-    return { lastPrice, prevClose, change, change_pct, last_dt: prevDt, last_ts: lastTs, basis: "ltp-vs-prevClose" };
-}
+//         if (lastClose == null || prevClose2 == null) {
+//             return { lastPrice, prevClose, change: null, change_pct: null, last_dt: latest?.dt ?? null, basis: "fallback-none" };
+//         }
+//         const change = lastClose - prevClose2;
+//         const change_pct = prevClose2 !== 0 ? (change / prevClose2) * 100 : null;
+//         return { lastPrice: lastClose, prevClose: prevClose2, change, change_pct, last_dt: latest.dt, basis: "two-distinct-daily-closes" };
+//     }
+
+//     // primary path
+//     const change = lastPrice - prevClose;
+//     const change_pct = prevClose !== 0 ? (change / prevClose) * 100 : null;
+//     return { lastPrice, prevClose, change, change_pct, last_dt: prevDt, last_ts: lastTs, basis: "ltp-vs-prevClose" };
+// }
 
 function getInstrumentFilter(categoryRaw) {
     const category = String(categoryRaw || "nifty").toLowerCase();
@@ -145,40 +146,187 @@ async function pricesOverview(rawCategory, limitMovers = 5) {
         return { snapshotTs: null, tracked: 0, movers: { gainers: [], losers: [] } };
     }
 
-    const items = await Promise.all(
-        instruments.map(async (inst) => {
-            const [bar, daily] = await Promise.all([fetchLatestBar1m(inst.id), fetchDailyChangeIntraday(inst.id)]);
+    const instrumentIds = instruments.map((i) => i.id);
+
+    // 1) Latest 1m bar per instrument (single query)
+    const { data: intradayRows, error: intradayErr } = await sb
+        .from("price_bars_1m")
+        .select("instrument_id, ts, open, high, low, close, volume")
+        .in("instrument_id", instrumentIds)
+        .order("instrument_id", { ascending: true })
+        .order("ts", { ascending: false });
+
+    if (intradayErr) throw intradayErr;
+
+    const latest1mByInstrument = new Map();
+    for (const row of intradayRows || []) {
+        if (!latest1mByInstrument.has(row.instrument_id)) {
+            latest1mByInstrument.set(row.instrument_id, {
+                ts: row.ts,
+                open: safeNum(row.open),
+                high: safeNum(row.high),
+                low: safeNum(row.low),
+                close: safeNum(row.close),
+                volume: safeNum(row.volume),
+            });
+        }
+    }
+
+    // 2) Last few daily bars per instrument (single query)
+    // Optional: restrict to recent dt (e.g. last 60 days) if table is huge
+    const { data: dailyRows, error: dailyErr } = await sb
+        .from("price_bars_1d")
+        .select("instrument_id, dt, close")
+        .in("instrument_id", instrumentIds)
+        .order("instrument_id", { ascending: true })
+        .order("dt", { ascending: false });
+
+    if (dailyErr) throw dailyErr;
+
+    const dailyByInstrument = new Map();
+
+    for (const row of dailyRows || []) {
+        const arr = dailyByInstrument.get(row.instrument_id) || [];
+        // keep only a few recent entries per instrument for safety
+        if (arr.length < 4) {
+            arr.push({
+                dt: row.dt,
+                close: safeNum(row.close),
+            });
+            dailyByInstrument.set(row.instrument_id, arr);
+        }
+    }
+
+    function computeDailyChange(instId) {
+        const arr = dailyByInstrument.get(instId) || [];
+        if (!arr.length) {
             return {
-                symbol: inst.symbol,
-                name: inst.name || inst.symbol,
-                asset: inst.asset,
-                exchange: inst.exchanges?.code ?? null,
-                last_price: safeNum(bar?.close),
-                last_updated: bar?.ts ?? null,
-                last_close: daily.prevClose,
-                prev_close: daily.prevClose,
-                change: daily.change,
-                change_pct: daily.change_pct,
-                last_close_dt: daily.last_dt
+                lastClose: null,
+                prevClose: null,
+                change: null,
+                change_pct: null,
+                last_dt: null,
             };
-        })
+        }
+
+        // ensure distinct dates just in case
+        const uniqueByDate = [];
+        const seen = new Set();
+        for (const r of arr) {
+            if (!seen.has(r.dt)) {
+                seen.add(r.dt);
+                uniqueByDate.push(r);
+            }
+            if (uniqueByDate.length === 2) break;
+        }
+
+        const latest = uniqueByDate[0];
+        const prev = uniqueByDate[1];
+
+        const lastClose = latest?.close ?? null;
+        const prevClose = prev?.close ?? null;
+
+        if (lastClose == null || prevClose == null) {
+            return {
+                lastClose,
+                prevClose,
+                change: null,
+                change_pct: null,
+                last_dt: latest?.dt ?? null,
+            };
+        }
+
+        const change = lastClose - prevClose;
+        const change_pct = prevClose !== 0 ? (change / prevClose) * 100 : null;
+
+        return {
+            lastClose,
+            prevClose,
+            change,
+            change_pct,
+            last_dt: latest?.dt ?? null,
+        };
+    }
+
+
+
+    // const items = await Promise.all(
+    //     instruments.map(async (inst) => {
+    //         const [bar, daily] = await Promise.all([fetchLatestBar1m(inst.id), fetchDailyChangeIntraday(inst.id)]);
+    //         return {
+    //             symbol: inst.symbol,
+    //             name: inst.name || inst.symbol,
+    //             asset: inst.asset,
+    //             exchange: inst.exchanges?.code ?? null,
+    //             last_price: safeNum(bar?.close),
+    //             last_updated: bar?.ts ?? null,
+    //             last_close: daily.prevClose,
+    //             prev_close: daily.prevClose,
+    //             change: daily.change,
+    //             change_pct: daily.change_pct,
+    //             last_close_dt: daily.last_dt
+    //         };
+    //     })
+    // );
+
+    // // compute movers by change_pct
+    // const valid = items.filter((i) => typeof i.change_pct === "number");
+    // const sorted = [...valid].sort((a, b) => (b.change_pct ?? -Infinity) - (a.change_pct ?? -Infinity));
+    // const gainers = sorted.slice(0, limitMovers);
+    // const losers = sorted.slice(-limitMovers).reverse();
+
+    // // snapshot ts = max of last_updated
+    // const snapshotTs = items.reduce((acc, r) => (acc && r.last_updated && acc > r.last_updated ? acc : r.last_updated || acc), null);
+
+    // return {
+    //     snapshotTs,
+    //     tracked: items.length,
+    //     movers: { gainers, losers }
+    // };
+
+    const items = instruments.map((inst) => {
+        const bar = latest1mByInstrument.get(inst.id) || null;
+        const daily = computeDailyChange(inst.id);
+
+        const last_price = bar?.close ?? daily.lastClose ?? null;
+        const last_updated = bar?.ts ?? null;
+
+        return {
+            symbol: inst.symbol,
+            name: inst.name || inst.symbol,
+            asset: inst.asset,
+            exchange: inst.exchanges?.code ?? null,
+            last_price,
+            last_updated,
+            last_close: daily.lastClose,
+            prev_close: daily.prevClose,
+            change: daily.change,
+            change_pct: daily.change_pct,
+            last_close_dt: daily.last_dt,
+        };
+    });
+
+    const valid = items.filter((i) => typeof i.change_pct === "number");
+
+    const sorted = [...valid].sort(
+        (a, b) => (b.change_pct ?? -Infinity) - (a.change_pct ?? -Infinity)
     );
 
-    // compute movers by change_pct
-    const valid = items.filter((i) => typeof i.change_pct === "number");
-    const sorted = [...valid].sort((a, b) => (b.change_pct ?? -Infinity) - (a.change_pct ?? -Infinity));
     const gainers = sorted.slice(0, limitMovers);
     const losers = sorted.slice(-limitMovers).reverse();
 
-    // snapshot ts = max of last_updated
-    const snapshotTs = items.reduce((acc, r) => (acc && r.last_updated && acc > r.last_updated ? acc : r.last_updated || acc), null);
+    const snapshotTs = items.reduce(
+        (acc, r) => (acc && r.last_updated && acc > r.last_updated ? acc : r.last_updated || acc),
+        null
+    );
 
     return {
         snapshotTs,
         tracked: items.length,
-        movers: { gainers, losers }
+        movers: { gainers, losers },
     };
 }
+
 
 // --------------------------- CALENDAR HELPERS -------------------
 async function calendarSummary({ from, to, market, impact, type, search, symbols }) {
@@ -305,83 +453,215 @@ async function getRecentHeadlines(symbol, limit = 100) {
     }));
 }
 
-async function newsCards({ limitHeadlines = 3, returnTrend = false, baseInstruments = [] }) {
-    const results = [];
+// async function newsCards({ limitHeadlines = 3, returnTrend = false, baseInstruments = [] }) {
+//     const results = [];
 
-    for (const { symbol, instrument } of baseInstruments) {
-        const row = await getLatestSnapshot(symbol);
-        if (!row) {
-            results.push({
-                instrument: instrument || symbol,
+//     for (const { symbol, instrument } of baseInstruments) {
+//         const row = await getLatestSnapshot(symbol);
+//         if (!row) {
+//             results.push({
+//                 instrument: instrument || symbol,
+//                 symbol,
+//                 sentiment: "neutral",
+//                 sentimentScore: 0.5,
+//                 trend: [],
+//                 headlines: [],
+//                 summary: `${symbol} awaiting first snapshot`
+//             });
+//             continue;
+//         }
+//         const snap = row.snapshot || {};
+//         const sentiment = snap.sentiment || row.sentiment_label || "neutral";
+//         const sentimentScore = typeof snap.sentimentScore === "number" ? snap.sentimentScore : Number(row.sentiment_score || 0.5);
+//         const instrumentName = snap.instrument || row.instrument || instrument || symbol;
+
+//         let headlines = await getRecentHeadlines(symbol, limitHeadlines);
+//         if (!headlines.length && Array.isArray(snap.headlines)) {
+//             headlines = snap.headlines.slice(0, limitHeadlines);
+//         }
+
+//         const card = {
+//             instrument: instrumentName,
+//             symbol,
+//             sentiment,
+//             sentimentScore,
+//             trend: [],
+//             headlines,
+//             summary: snap.summary || "—"
+//         };
+
+//         // optional trend: reuse last N snapshots and map to 0–100
+//         if (returnTrend) {
+//             const { data: snaps } = await sb
+//                 .from("mood_snapshots")
+//                 .select("captured_at,sentiment_label,sentiment_score")
+//                 .eq("symbol", symbol)
+//                 .order("captured_at", { ascending: false })
+//                 .limit(9);
+//             const map = { positive: 70, neutral: 50, negative: 30 };
+//             card.trend = (snaps || [])
+//                 .reverse()
+//                 .map((r) => map[r.sentiment_label] ?? Math.round((Number(r.sentiment_score ?? 0.5)) * 100));
+//         }
+
+//         results.push(card);
+//     }
+
+//     // counts across window (simple totals from headlines)
+//     const { data: counts } = await sb
+//         .from("mood_headlines")
+//         .select("symbol", { count: "exact", head: true });
+
+//     const instrumentsCovered = counts?.length ?? 0;
+//     const { data: hlCount } = await sb.from("mood_headlines").select("*", { count: "exact", head: true });
+
+//     const { data: snapTsRow } = await sb
+//         .from("mood_headlines")
+//         .select("published_at")
+//         .order("published_at", { ascending: false, nullsFirst: false })
+//         .limit(1);
+
+//     return {
+//         instrumentsCovered,
+//         headlinesIndexed: hlCount?.length ?? 0,
+//         snapshotTs: snapTsRow?.[0]?.published_at ?? null,
+//         cards: results
+//     };
+// }
+
+// --------------------------- ROUTE ------------------------------
+
+async function newsCards({
+    limitHeadlines = 1,        // per instrument
+    limitCards = 4,            // total cards you actually care about
+    baseInstruments = [],
+}) {
+    const symbols = baseInstruments.map((b) => b.symbol);
+
+    // 1) Latest snapshot PER symbol (one query)
+    const { data: snaps, error: snapsErr } = await sb
+        .from("mood_snapshots")
+        .select("symbol,instrument,sentiment_label,sentiment_score,snapshot,captured_at")
+        .in("symbol", symbols)
+        .order("captured_at", { ascending: false });
+    if (snapsErr) throw snapsErr;
+
+    const latestSnapBySymbol = new Map();
+    for (const row of snaps || []) {
+        if (!latestSnapBySymbol.has(row.symbol)) {
+            latestSnapBySymbol.set(row.symbol, row);
+        }
+    }
+
+    // 2) Headlines for all symbols in one shot
+    const { data: headlines, error: hlErr } = await sb
+        .from("mood_headlines")
+        .select("symbol,headline_id,title,summary,sentiment,source,link,published_at,captured_at")
+        .in("symbol", symbols)
+        .order("published_at", { ascending: false, nullsFirst: false });
+    if (hlErr) throw hlErr;
+
+    // group headlines per symbol, but respect limitHeadlines
+    const groupedHeadlines = new Map();
+    for (const h of headlines || []) {
+        const list = groupedHeadlines.get(h.symbol) || [];
+        if (list.length >= limitHeadlines) continue;
+        list.push({
+            id: h.headline_id,
+            title: h.title,
+            sentiment: h.sentiment,
+            timestamp: h.published_at || h.captured_at,
+            source: h.source || "News",
+            summary: h.summary,
+            link: h.link || undefined,
+        });
+        groupedHeadlines.set(h.symbol, list);
+    }
+
+    // 3) Build cards in baseInstruments order
+    const cards = [];
+    for (const base of baseInstruments) {
+        const symbol = base.symbol;
+        const snapRow = latestSnapBySymbol.get(symbol);
+        const hl = groupedHeadlines.get(symbol) || [];
+
+        if (!snapRow && !hl.length) {
+            cards.push({
+                instrument: base.instrument || symbol,
                 symbol,
                 sentiment: "neutral",
                 sentimentScore: 0.5,
                 trend: [],
                 headlines: [],
-                summary: `${symbol} awaiting first snapshot`
+                summary: `${symbol} awaiting first snapshot`,
             });
             continue;
         }
-        const snap = row.snapshot || {};
-        const sentiment = snap.sentiment || row.sentiment_label || "neutral";
-        const sentimentScore = typeof snap.sentimentScore === "number" ? snap.sentimentScore : Number(row.sentiment_score || 0.5);
-        const instrumentName = snap.instrument || row.instrument || instrument || symbol;
 
-        let headlines = await getRecentHeadlines(symbol, limitHeadlines);
-        if (!headlines.length && Array.isArray(snap.headlines)) {
-            headlines = snap.headlines.slice(0, limitHeadlines);
-        }
+        const snap = snapRow?.snapshot || {};
+        const sentiment =
+            snap.sentiment ||
+            snapRow?.sentiment_label ||
+            "neutral";
+        const sentimentScore =
+            typeof snap.sentimentScore === "number"
+                ? snap.sentimentScore
+                : Number(snapRow?.sentiment_score ?? 0.5);
+        const instrumentName =
+            snap.instrument ||
+            snapRow?.instrument ||
+            base.instrument ||
+            symbol;
 
-        const card = {
+        cards.push({
             instrument: instrumentName,
             symbol,
             sentiment,
             sentimentScore,
-            trend: [],
-            headlines,
-            summary: snap.summary || "—"
-        };
-
-        // optional trend: reuse last N snapshots and map to 0–100
-        if (returnTrend) {
-            const { data: snaps } = await sb
-                .from("mood_snapshots")
-                .select("captured_at,sentiment_label,sentiment_score")
-                .eq("symbol", symbol)
-                .order("captured_at", { ascending: false })
-                .limit(9);
-            const map = { positive: 70, neutral: 50, negative: 30 };
-            card.trend = (snaps || [])
-                .reverse()
-                .map((r) => map[r.sentiment_label] ?? Math.round((Number(r.sentiment_score ?? 0.5)) * 100));
-        }
-
-        results.push(card);
+            trend: [], // only fill if returnTrend=true, see below
+            headlines: hl,
+            summary: snap.summary || "—",
+        });
     }
 
-    // counts across window (simple totals from headlines)
-    const { data: counts } = await sb
-        .from("mood_headlines")
-        .select("symbol", { count: "exact", head: true });
+    // 4) Optional: if you ever decide to use trend again
+    // do ONE extra query per symbol set, not 1 per symbol
+    // only if returnTrend === true
+    // (you can wire that in later if needed)
 
-    const instrumentsCovered = counts?.length ?? 0;
-    const { data: hlCount } = await sb.from("mood_headlines").select("*", { count: "exact", head: true });
-
-    const { data: snapTsRow } = await sb
+    // 5) KPI counts (cheaper and saner)
+    const { count: hlCount, error: hlCountErr } = await sb
         .from("mood_headlines")
-        .select("published_at")
-        .order("published_at", { ascending: false, nullsFirst: false })
-        .limit(1);
+        .select("*", { count: "exact", head: true });
+    if (hlCountErr) throw hlCountErr;
+
+    const instrumentsCovered = new Set((headlines || []).map((h) => h.symbol)).size;
+
+    const snapshotTs =
+        (headlines && headlines[0]?.published_at) || null;
+
+    // 6) Apply limitCards at API level (save frontend extra work)
+    const sortedCards = cards
+        .filter((c) => c.headlines.length)
+        .sort(
+            (a, b) =>
+                new Date(
+                    b.headlines[0]?.timestamp || 0
+                ) -
+                new Date(
+                    a.headlines[0]?.timestamp || 0
+                )
+        )
+        .slice(0, limitCards);
 
     return {
         instrumentsCovered,
-        headlinesIndexed: hlCount?.length ?? 0,
-        snapshotTs: snapTsRow?.[0]?.published_at ?? null,
-        cards: results
+        headlinesIndexed: hlCount ?? 0,
+        snapshotTs,
+        cards: sortedCards,
     };
 }
 
-// --------------------------- ROUTE ------------------------------
 router.get("/overview", async (req, res) => {
     const nowDay = todayUTC();
     const defaultFrom = new Date(nowDay);
@@ -398,12 +678,19 @@ router.get("/overview", async (req, res) => {
     const symbols = csvOrRepeatable(req.query, "symbols");
     const category = req.query.category || "all";
 
+    // const limitMovers = Number(req.query.limitMovers ?? 5);
+    // const limitHeadlines = Number(req.query.limitHeadlines ?? 1);
+    // const returnTrend = parseBool(req.query.returnTrend, false);
+
     const limitMovers = Number(req.query.limitMovers ?? 5);
-    const limitHeadlines = Number(req.query.limitHeadlines ?? 3);
+    const limitHeadlines = Number(req.query.limitHeadlines ?? 1);   // per instrument
+    const limitNewsCards = Number(req.query.limitNewsCards ?? 4);   // total cards
     const returnTrend = parseBool(req.query.returnTrend, false);
+
 
     // use same BASE_INSTRUMENTS set as news.js for cards
     const BASE_INSTRUMENTS = [
+        { symbol: "EURUSD", instrument: "EUR/USD", type: "forex" },
         { symbol: "EURINR", instrument: "EUR/INR", type: "forex" },
         { symbol: "USDINR", instrument: "USD/INR", type: "forex" },
         { symbol: "INFY", instrument: "Infosys Ltd", type: "equity" },
@@ -411,8 +698,10 @@ router.get("/overview", async (req, res) => {
         { symbol: "RELIANCE", instrument: "Reliance Industries", type: "equity" },
         { symbol: "ICICIBANK", instrument: "ICICI Bank", type: "equity" },
         { symbol: "HDFCBANK", instrument: "HDFC Bank", type: "equity" },
+        { symbol: "SBIN", instrument: "State Bank of India", type: "equity" },
         { symbol: "BTCUSDT", instrument: "Bitcoin / USDT", type: "crypto" },
-        { symbol: "ETHUSDT", instrument: "Ethereum / USDT", type: "crypto" }
+        { symbol: "ETHUSDT", instrument: "Ethereum / USDT", type: "crypto" },
+        { symbol: "SOLUSDT", instrument: "Solana / USDT", type: "crypto" },
     ];
 
     // parallel blocks with partial failure tolerance
@@ -433,9 +722,18 @@ router.get("/overview", async (req, res) => {
             __error__: e.message || String(e)
         })),
 
-        news: newsCards({ limitHeadlines, returnTrend, baseInstruments: BASE_INSTRUMENTS }).catch((e) => ({
-            __error__: e.message || String(e)
-        }))
+        // news: newsCards({ limitHeadlines, returnTrend, baseInstruments: BASE_INSTRUMENTS }).catch((e) => ({
+        //     __error__: e.message || String(e)
+        // }))
+
+        news: newsCards({
+            limitHeadlines,
+            limitCards: limitNewsCards,
+            returnTrend,
+            baseInstruments: BASE_INSTRUMENTS,
+        }).catch((e) => ({
+            __error__: e.message || String(e),
+        })),
     };
 
     const [calendar, prices, sentiment, news] = await Promise.all([
