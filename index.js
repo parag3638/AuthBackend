@@ -62,30 +62,38 @@ app.use(express.json({ limit: "5mb" }));
 app.use(morgan("dev"));
 
 
-
 // Routes
 app.use('/api/auth/', authRoutes);
 
 app.use("/intake", intakeRoutes);
 
-app.use("/doctor", auth, doctor);
-// app.use('/doctor', auth, doctor);
+// app.use("/doctor", auth, doctor);
+app.use('/doctor', doctor);
 
-app.use('/prices', auth, instrumentPrices);
+// app.use('/prices', auth, instrumentPrices);
+app.use('/prices', instrumentPrices);
 
-app.use('/mood', auth, news);
+// app.use('/mood', auth, news);
+app.use('/mood', news);
 
-app.use('/calendar', auth, calendar);
+// app.use('/calendar', auth, calendar);
+app.use('/calendar', calendar);
 
-app.use('/finance', auth, finDash);
+// app.use('/finance', auth, finDash);
+app.use('/finance', finDash);
 
 app.get('/', (req, res) => {
     res.send('MFA Auth Working!');
 });
 
-app.use("/templates", auth, templates);
+// app.use("/templates", auth, templates);
+app.use("/templates", templates);
 
-app.get('/me', auth, (req, res) => {
+// app.get('/me', auth, (req, res) => {
+//     res.json({ user: req.user });
+// });
+
+app.get('/me', (req, res) => {
     res.json({ user: req.user });
 });
 
