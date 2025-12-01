@@ -667,7 +667,7 @@ router.get("/overview", async (req, res) => {
     const defaultFrom = new Date(nowDay);
     defaultFrom.setUTCDate(defaultFrom.getUTCDate() - 7);
     const defaultTo = new Date(nowDay);
-    defaultTo.setUTCDate(defaultTo.getUTCDate() + 7);
+    defaultTo.setUTCDate(defaultTo.getUTCDate() + 21);
 
     const start = req.query.from ? new Date(req.query.from) : defaultFrom;
     const end = req.query.to ? new Date(req.query.to) : defaultTo;
