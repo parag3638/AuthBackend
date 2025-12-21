@@ -21,6 +21,7 @@ const instrumentPrices = require("./routers/instrumentPrices/prices");
 const news = require("./routers/news/news");
 const calendar = require("./routers/calendar/calendar");
 const finDash = require("./routers/finDash/dashboard");
+const vectorAI = require("./routers/vectorshift/VectorAI");
 
 // Trust proxy for secure cookies behind Render/NGINX
 app.set('trust proxy', 1);
@@ -28,6 +29,7 @@ app.set('trust proxy', 1);
 const allowedOrigins = [
     'http://localhost:3000', // common FE dev port
     'http://localhost:9000',
+    'https://vectorshift-bazinga.vercel.app/',
     ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean) : [])
 ];
 
@@ -81,6 +83,9 @@ app.use('/calendar', calendar);
 
 // app.use('/finance', auth, finDash);
 app.use('/finance', finDash);
+
+// app.use("/vectorshift", auth, vectorAI);
+app.use("/vectorshift", vectorAI);
 
 app.get('/', (req, res) => {
     res.send('MFA Auth Working!');
