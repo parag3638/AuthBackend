@@ -88,11 +88,6 @@ router.post("/agent", sseLimiter, async (req, res) => {
             return res.status(400).json({ error: "user_message is required" });
         }
 
-        // SSE headers
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache, no-transform");
-        res.setHeader("Connection", "keep-alive");
-
         const safeMaxOutputTokens = Number.isFinite(Number(max_output_tokens))
             ? Math.max(32, Math.min(800, Number(max_output_tokens)))
             : 200;
@@ -115,13 +110,7 @@ router.post("/agent", sseLimiter, async (req, res) => {
             { role: "user", content: user_message.slice(0, 4000) },
         ];
 
-        // SSE helper
-        const send = (event, data) => {
-            res.write(`event: ${event}\n`);
-            res.write(`data: ${JSON.stringify(data)}\n\n`);
-        };
-
-        // Call OpenAI streaming
+        // Call OpenAI (non-streaming)
         const resp = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -130,75 +119,44 @@ router.post("/agent", sseLimiter, async (req, res) => {
             },
             body: JSON.stringify({
                 model: "gpt-4o-mini",
-                stream: true,
+                stream: false,
                 temperature: 0.3,
                 max_tokens: safeMaxOutputTokens,
                 messages,
             }),
         });
 
-        if (!resp.ok || !resp.body) {
+        if (!resp.ok) {
             const text = await resp.text().catch(() => "");
-            send("error", { error: text || resp.statusText });
-            res.end();
-            return;
+            return res.status(resp.status).json({ error: text || resp.statusText });
         }
 
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
+        const data = await resp.json();
+        const fullText = data?.choices?.[0]?.message?.content || "";
 
-        let fullText = "";
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value, { stream: true });
-            for (const line of chunk.split("\n")) {
-                const trimmed = line.trim();
-                if (!trimmed.startsWith("data:")) continue;
-
-                const payload = trimmed.slice(5).trim();
-                if (payload === "[DONE]") {
-                    // Try to extract COPILOT_ACTIONS JSON if present
-                    const marker = "COPILOT_ACTIONS:";
-                    const idx = fullText.lastIndexOf(marker);
-                    if (idx !== -1) {
-                        const maybe = fullText.slice(idx + marker.length).trim();
-                        // maybe is within ``` ... ```
-                        const jsonText = maybe.replace(/^```/, "").replace(/```$/, "").trim();
-                        try {
-                            const actionsPayload = JSON.parse(jsonText);
-                            send("actions", actionsPayload);
-                        } catch (e) {
-                            // if parsing fails, still finish normally
-                            send("actions_error", { error: "Failed to parse COPILOT_ACTIONS JSON" });
-                        }
-                    }
-                    send("done", {});
-                    res.end();
-                    return;
-                }
-
-                try {
-                    const json = JSON.parse(payload);
-                    const delta = json?.choices?.[0]?.delta?.content || "";
-                    if (delta) {
-                        fullText += delta;
-                        send("token", { text: delta });
-                    }
-                } catch {
-                    // ignore keepalives / partial lines
-                }
+        let actionsPayload = null;
+        let actionsError = null;
+        const marker = "COPILOT_ACTIONS:";
+        const idx = fullText.lastIndexOf(marker);
+        if (idx !== -1) {
+            const maybe = fullText.slice(idx + marker.length).trim();
+            const jsonText = maybe.replace(/^```/, "").replace(/```$/, "").trim();
+            try {
+                actionsPayload = JSON.parse(jsonText);
+            } catch (e) {
+                actionsError = "Failed to parse COPILOT_ACTIONS JSON";
             }
         }
 
-        send("done", {});
-        res.end();
+        res.setHeader("Content-Type", "application/json");
+        return res.json({
+            text: fullText,
+            actions: actionsPayload,
+            actions_error: actionsError,
+        });
     } catch (err) {
         try {
-            res.write(`event: error\ndata: ${JSON.stringify({ error: err?.message || "error" })}\n\n`);
-            res.end();
+            res.status(500).json({ error: err?.message || "error" });
         } catch { }
     }
 });
