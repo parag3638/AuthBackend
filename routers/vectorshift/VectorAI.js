@@ -16,7 +16,7 @@ const sseLimiter = rateLimit({
 });
 
 
-function buildSysPrompt({ nodeCatalog, includeActions }) {
+function buildSysPrompt({ nodeCatalog, includeActions, maxOutputTokens }) {
     const catalogJson = JSON.stringify(nodeCatalog, null, 2);
 
     // The bot should not hallucinate node types. Force it to only use known ones.
@@ -32,6 +32,7 @@ function buildSysPrompt({ nodeCatalog, includeActions }) {
         "- Do NOT invent node types or handles not in the catalog.",
         "- If something is missing, say what's missing and propose the closest alternative.",
         "- Be concise. Prefer steps and small diagrams.",
+        `- Keep answers under ~${maxOutputTokens} tokens; use 1-3 sentences unless user asks for detail.`,
         "",
         includeActions
             ? [
@@ -79,6 +80,8 @@ router.post("/agent", sseLimiter, async (req, res) => {
             edges = [],
             // optional: allow your UI to request structured actions
             include_actions = true,
+            // optional: cap response length
+            max_output_tokens = 200,
         } = req.body || {};
 
         if (!user_message || typeof user_message !== "string") {
@@ -90,9 +93,14 @@ router.post("/agent", sseLimiter, async (req, res) => {
         res.setHeader("Cache-Control", "no-cache, no-transform");
         res.setHeader("Connection", "keep-alive");
 
+        const safeMaxOutputTokens = Number.isFinite(Number(max_output_tokens))
+            ? Math.max(32, Math.min(800, Number(max_output_tokens)))
+            : 200;
+
         const sysPrompt = buildSysPrompt({
             nodeCatalog: NODE_CATALOG,
             includeActions: Boolean(include_actions),
+            maxOutputTokens: safeMaxOutputTokens,
         });
 
         const pipelineContext = buildContextSummary({ nodes, edges });
@@ -124,6 +132,7 @@ router.post("/agent", sseLimiter, async (req, res) => {
                 model: "gpt-4o-mini",
                 stream: true,
                 temperature: 0.3,
+                max_tokens: safeMaxOutputTokens,
                 messages,
             }),
         });
