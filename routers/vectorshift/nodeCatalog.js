@@ -103,3 +103,5 @@ const NODE_CATALOG = [
     examples: ["Start 0, step 1", "Start 10, step 5"],
   },
 ];
+
+module.exports = NODE_CATALOG;

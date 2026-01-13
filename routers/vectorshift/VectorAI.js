@@ -2,7 +2,7 @@ const express = require("express");
 const rateLimit = require("express-rate-limit");
 const router = express.Router();
 const OpenAI = require("openai");
- const NODE_CATALOG = require("./nodeCatalog.js");
+const NODE_CATALOG = require("./nodeCatalog.js");
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
