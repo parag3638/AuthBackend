@@ -70,6 +70,74 @@ function buildContextSummary({ nodes, edges }) {
     ].join("\n");
 }
 
+function buildGraph(nodes, edges) {
+    const nodeIds = new Set();
+    const adj = new Map();
+
+    (nodes || []).forEach((node) => {
+        const id = String(node.id);
+        nodeIds.add(id);
+        if (!adj.has(id)) adj.set(id, []);
+    });
+
+    (edges || []).forEach((edge) => {
+        const source = String(edge.source);
+        const target = String(edge.target);
+        nodeIds.add(source);
+        nodeIds.add(target);
+        if (!adj.has(source)) adj.set(source, []);
+        if (!adj.has(target)) adj.set(target, []);
+        adj.get(source).push(target);
+    });
+
+    return { nodeIds, adj, edgeCount: (edges || []).length };
+}
+
+function isDag({ nodeIds, adj }) {
+    const indegree = new Map();
+    nodeIds.forEach((id) => indegree.set(id, 0));
+
+    nodeIds.forEach((id) => {
+        const neighbors = adj.get(id) || [];
+        neighbors.forEach((to) => {
+            indegree.set(to, (indegree.get(to) || 0) + 1);
+        });
+    });
+
+    const queue = [];
+    indegree.forEach((deg, id) => {
+        if (deg === 0) queue.push(id);
+    });
+
+    let visited = 0;
+    while (queue.length) {
+        const id = queue.shift();
+        visited += 1;
+        const neighbors = adj.get(id) || [];
+        neighbors.forEach((to) => {
+            const next = (indegree.get(to) || 0) - 1;
+            indegree.set(to, next);
+            if (next === 0) queue.push(to);
+        });
+    }
+
+    return visited === nodeIds.size;
+}
+
+router.post("/pipelines/parse", (req, res) => {
+    const { nodes = [], edges = [] } = req.body || {};
+    if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+        return res.status(400).json({ error: "nodes and edges must be arrays" });
+    }
+
+    const graph = buildGraph(nodes, edges);
+    return res.json({
+        num_nodes: graph.nodeIds.size,
+        num_edges: graph.edgeCount,
+        is_dag: isDag(graph),
+    });
+});
+
 router.post("/agent", sseLimiter, async (req, res) => {
     try {
         const {
