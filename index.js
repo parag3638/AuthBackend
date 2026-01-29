@@ -5,6 +5,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
+const { createClient } = require("@supabase/supabase-js");
 
 const helmet = require("helmet");
 const morgan = require("morgan");
@@ -23,6 +24,10 @@ const calendar = require("./routers/calendar/calendar");
 const finDash = require("./routers/finDash/dashboard");
 const vectorAI = require("./routers/vectorshift/VectorAI");
 
+const createRequireAuth = require("./routers/whitecarrot/auth/auth");
+const createCandidateRouter = require("./routers/whitecarrot/candidate/candidate");
+const createRecruiterRouter = require("./routers/whitecarrot/recruiter/recruiter");
+
 // Trust proxy for secure cookies behind Render/NGINX
 app.set('trust proxy', 1);
 
@@ -30,6 +35,7 @@ const allowedOrigins = [
     'http://localhost:3000', // common FE dev port
     'http://localhost:9000',
     'https://vectorshift-bazinga.vercel.app/',
+    'https://whitecarrot-two.vercel.app',
     ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean) : [])
 ];
 
@@ -97,6 +103,16 @@ app.use("/templates", templates);
 // app.get('/me', auth, (req, res) => {
 //     res.json({ user: req.user });
 // });
+
+
+const supabaseTouch = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+  db: { schema: "whitecarrot" },
+});
+
+const requireAuth = createRequireAuth(supabaseTouch);
+app.use("/api/public", createCandidateRouter({ supabase: supabaseTouch }));
+app.use("/api/recruiter", createRecruiterRouter({ supabase: supabaseTouch, requireAuth }));
+
 
 app.get('/me', (req, res) => {
     res.json({ user: req.user });
